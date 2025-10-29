@@ -5,7 +5,7 @@ use crate::state::Order;
 use crate::errors::ErrorCode;
 
 #[derive(Accounts)]
-#[instruction(amount: u64, expiry_ts: i64, fee_bps: u16, nonce: u64, qr_string: String)]
+#[instruction(amount: u64, expiry_ts: i64, fee_percentage: u8, nonce: u64, qr_string: String)]
 pub struct CreateRequest<'info> {
     /// payer/creator
     #[account(mut)]
@@ -41,13 +41,13 @@ pub fn create_request(
     ctx: Context<CreateRequest>,
     amount: u64,
     expiry_ts: i64,
-    fee_bps: u16,
+    fee_percentage: u8,
     nonce: u64,
     qr_string: String,
 ) -> Result<()> {
     require!(amount > 0, ErrorCode::InvalidAmount);
-    require!(fee_bps <= 10000, ErrorCode::InvalidFee);
-    require!(qr_string.len() <= 200, ErrorCode::QRTooLong);
+    require!(fee_percentage <= 100, ErrorCode::InvalidFee);
+    require!(qr_string.len() <= 500, ErrorCode::QRTooLong); // Increased from 200 to 500
 
     let order = &mut ctx.accounts.order;
     order.creator = *ctx.accounts.creator.key;
@@ -60,7 +60,7 @@ pub fn create_request(
     order.paid_at = None;
     order.released_at = None;
     order.receipt_hash = None;
-    order.fee_bps = fee_bps;
+    order.fee_percentage = fee_percentage;
     // for simplicity set arbiter = creator; frontend may pass a different account in advanced version
     order.arbiter = *ctx.accounts.creator.key;
     order.nonce = nonce;

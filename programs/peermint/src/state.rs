@@ -12,14 +12,14 @@ pub struct Order {
     pub paid_at: Option<i64>,           // 1 + 8
     pub released_at: Option<i64>,       // 1 + 8
     pub receipt_hash: Option<[u8; 32]>, // 1 + 32
-    pub fee_bps: u16,                   // 2
+    pub fee_percentage: u8,             // 1 (0-100, representing percentage)
     pub arbiter: Pubkey,                // 32
     pub nonce: u64,                     // 8
     pub bump: u8,                       // 1
-    pub qr_string: String,              // 4 + up to 200
+    pub qr_string: String,              // 4 + up to 500 (increased from 200)
 }
 
 impl Order {
     pub const LEN: usize = 8 + // discriminator
-        32 + (1 + 32) + 32 + 8 + 1 + 8 + 8 + (1 + 8) + (1 + 8) + (1 + 32) + 2 + 32 + 8 + 1 + (4 + 200);
+        32 + (1 + 32) + 32 + 8 + 1 + 8 + 8 + (1 + 8) + (1 + 8) + (1 + 32) + 1 + 32 + 8 + 1 + (4 + 500);
 }

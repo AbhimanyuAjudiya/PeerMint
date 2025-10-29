@@ -18,7 +18,7 @@ pub mod peermint {
         ctx: Context<CreateRequest>,
         amount: u64,
         expiry_ts: i64,
-        fee_bps: u16,
+        fee_percentage: u8,
         nonce: u64,
         qr_string: String,
     ) -> Result<()> {
@@ -26,7 +26,7 @@ pub mod peermint {
             ctx,
             amount,
             expiry_ts,
-            fee_bps,
+            fee_percentage,
             nonce,
             qr_string,
         )

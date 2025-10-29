@@ -31,14 +31,15 @@ pub fn acknowledge_and_release(ctx: Context<AcknowledgeAndRelease>) -> Result<()
     require!(ctx.accounts.order.creator == *ctx.accounts.creator.key, ErrorCode::Unauthorized);
     
     let amount = ctx.accounts.order.amount;
-    let fee_bps = ctx.accounts.order.fee_bps;
+    let fee_percentage = ctx.accounts.order.fee_percentage;
     let creator_key = ctx.accounts.order.creator;
     let nonce = ctx.accounts.order.nonce;
     let bump = ctx.accounts.order.bump;
     
+    // Calculate fee: amount * fee_percentage / 100
     let fee = (amount as u128)
-        .checked_mul(fee_bps as u128).ok_or(ErrorCode::MathOverflow)?
-        .checked_div(10000u128).ok_or(ErrorCode::MathOverflow)? as u64;
+        .checked_mul(fee_percentage as u128).ok_or(ErrorCode::MathOverflow)?
+        .checked_div(100u128).ok_or(ErrorCode::MathOverflow)? as u64;
     let payout = amount.checked_sub(fee).ok_or(ErrorCode::MathOverflow)?;
 
     let seeds = &[
