@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X } from "lucide-react";
+import { Menu, X, Coins } from "lucide-react";
 import { useState } from "react";
 import WalletButton from "./wallet-button";
 
@@ -18,12 +18,14 @@ export default function Header() {
   ];
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-gray-200/50 bg-white/80 backdrop-blur-xl">
+    <header className="sticky top-0 z-50 w-full border-b border-gray-200/30 bg-white backdrop-blur-xl">
       <nav className="container mx-auto px-6 py-4">
         <div className="flex items-center justify-between">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-3 group">
-            <div className="w-10 h-10 bg-gradient-to-br from-[#8FFF73] to-[#E8E0FF] rounded-xl group-hover:scale-110 transition-transform duration-300 shadow-lg"></div>
+            <div className="w-10 h-10 bg-gradient-to-br from-[#8FFF73] to-[#E8E0FF] rounded-xl group-hover:scale-110 transition-transform duration-300 shadow-lg flex items-center justify-center">
+              <Coins className="w-6 h-6 text-[#0D0D0D]" />
+            </div>
             <span className="text-2xl font-bold bg-gradient-to-r from-[#0D0D0D] to-[#1a1a1a] bg-clip-text text-transparent">
               PeerMint
             </span>

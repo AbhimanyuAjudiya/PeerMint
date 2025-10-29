@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowRight, Shield, Zap, Globe, Lock, TrendingUp, Users, DollarSign, CheckCircle, CreditCard } from "lucide-react";
+import { ArrowRight, Shield, Zap, Globe, Lock, TrendingUp, Users, DollarSign, CheckCircle, CreditCard, Coins } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export default function Home() {
@@ -88,7 +88,9 @@ export default function Home() {
                     {/* App header */}
                     <div className="flex items-center justify-between mb-6">
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-linear-to-br from-[#8FFF73] to-[#E8E0FF] rounded-lg"></div>
+                        <div className="w-8 h-8 bg-linear-to-br from-[#8FFF73] to-[#E8E0FF] rounded-lg flex items-center justify-center">
+                          <Coins className="w-5 h-5 text-[#0D0D0D]" />
+                        </div>
                         <span className="text-white font-bold text-sm">PeerMint</span>
                       </div>
                       <div className="text-[#8FFF73] text-xs font-semibold">SCAN TO PAY</div>
@@ -552,7 +554,9 @@ export default function Home() {
         <div className="container mx-auto px-6">
           <div className="flex flex-col md:flex-row justify-between items-center gap-8">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-[#8FFF73] to-[#E8E0FF] rounded-xl"></div>
+              <div className="w-10 h-10 bg-gradient-to-br from-[#8FFF73] to-[#E8E0FF] rounded-xl flex items-center justify-center">
+                <Coins className="w-6 h-6 text-[#0D0D0D]" />
+              </div>
               <span className="text-2xl font-bold">PeerMint</span>
             </div>
 
