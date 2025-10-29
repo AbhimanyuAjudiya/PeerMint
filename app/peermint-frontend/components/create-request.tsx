@@ -3,13 +3,15 @@
 import { useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { AnchorProvider, BN } from "@coral-xyz/anchor";
-import { SystemProgram } from "@solana/web3.js";
+import { SystemProgram, Transaction } from "@solana/web3.js";
 import {
   getAssociatedTokenAddress,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
 import { getProgram, getOrderPda, USDC_MINT } from "@/lib/anchor";
+import { shortenUrlWithFallback } from "@/lib/url-shortener";
 import { Upload, Loader2, ScanLine } from "lucide-react";
 import QRScannerComponent from "./qr-scanner";
 
@@ -31,6 +33,18 @@ export default function CreateRequest() {
       setLoading(true);
       setSuccess("");
 
+      // Shorten the QR string if it's too long
+      let finalQrString = qrString;
+      if (qrString.length > 200) {
+        console.log("QR string too long, shortening...");
+        finalQrString = await shortenUrlWithFallback(qrString);
+        console.log("Shortened QR:", finalQrString);
+        
+        if (finalQrString.length > 200) {
+          throw new Error("QR string still too long after shortening. Please use a shorter payment link.");
+        }
+      }
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const provider = new AnchorProvider(connection, wallet as any, {});
       const program = getProgram(provider);
@@ -50,18 +64,42 @@ export default function CreateRequest() {
       const escrowAta = await getAssociatedTokenAddress(
         USDC_MINT,
         orderPda,
-        true
+        true // allowOwnerOffCurve - PDA can own token accounts
       );
 
       console.log("Source ATA:", sourceAta.toString());
       console.log("Escrow ATA:", escrowAta.toString());
+
+      // Check if escrow ATA exists, create if it doesn't
+      const escrowInfo = await connection.getAccountInfo(escrowAta);
+      if (!escrowInfo) {
+        console.log("Creating escrow token account...");
+        const createAtaIx = createAssociatedTokenAccountInstruction(
+          wallet.publicKey, // payer
+          escrowAta,        // ata
+          orderPda,         // owner (PDA)
+          USDC_MINT        // mint
+        );
+        
+        const createAtaTx = new Transaction().add(createAtaIx);
+        const { blockhash } = await connection.getLatestBlockhash();
+        createAtaTx.recentBlockhash = blockhash;
+        createAtaTx.feePayer = wallet.publicKey;
+        
+        const signedTx = await wallet.signTransaction(createAtaTx);
+        const createAtaSig = await connection.sendRawTransaction(signedTx.serialize());
+        await connection.confirmTransaction(createAtaSig);
+        console.log("Escrow ATA created:", createAtaSig);
+      } else {
+        console.log("Escrow ATA already exists");
+      }
 
       console.log("Creating order with params:", {
         amount: amountLamports,
         expiry: expiryTs,
         fee: parseInt(feeBps),
         nonce,
-        qrString
+        qrString: finalQrString,
       });
 
       const tx = await program.methods
@@ -70,7 +108,7 @@ export default function CreateRequest() {
           new BN(expiryTs),
           parseInt(feeBps),
           new BN(nonce),
-          qrString
+          finalQrString
         )
         .accounts({
           creator: wallet.publicKey,
