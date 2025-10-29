@@ -2,13 +2,12 @@
 
 import { useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { AnchorProvider } from "@coral-xyz/anchor";
+import { AnchorProvider, BN } from "@coral-xyz/anchor";
 import { SystemProgram } from "@solana/web3.js";
 import {
+  getAssociatedTokenAddress,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
-  getAssociatedTokenAddress,
-  getOrCreateAssociatedTokenAccount,
 } from "@solana/spl-token";
 import { getProgram, getOrderPda, USDC_MINT } from "@/lib/anchor";
 import { Upload, Loader2, ScanLine } from "lucide-react";
@@ -41,33 +40,36 @@ export default function CreateRequest() {
       const expiryTs = Math.floor(Date.now() / 1000) + parseInt(expiryHours) * 3600;
 
       const [orderPda] = getOrderPda(wallet.publicKey, nonce);
+      
+      // Calculate token account addresses
+      const sourceAta = await getAssociatedTokenAddress(
+        USDC_MINT,
+        wallet.publicKey
+      );
+      
       const escrowAta = await getAssociatedTokenAddress(
         USDC_MINT,
         orderPda,
         true
       );
 
-      const sourceAta = await getAssociatedTokenAddress(
-        USDC_MINT,
-        wallet.publicKey
-      );
+      console.log("Source ATA:", sourceAta.toString());
+      console.log("Escrow ATA:", escrowAta.toString());
 
-      // Create escrow ATA
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await getOrCreateAssociatedTokenAccount(
-        connection,
-        wallet as any, // Wallet adapter doesn't match Signer type exactly
-        USDC_MINT,
-        orderPda,
-        true
-      );
+      console.log("Creating order with params:", {
+        amount: amountLamports,
+        expiry: expiryTs,
+        fee: parseInt(feeBps),
+        nonce,
+        qrString
+      });
 
       const tx = await program.methods
         .createRequest(
-          amountLamports,
-          expiryTs,
+          new BN(amountLamports),
+          new BN(expiryTs),
           parseInt(feeBps),
-          nonce,
+          new BN(nonce),
           qrString
         )
         .accounts({
@@ -82,12 +84,14 @@ export default function CreateRequest() {
         })
         .rpc();
 
+      console.log("Transaction successful:", tx);
       setSuccess(`Request created! TX: ${tx.slice(0, 8)}...`);
       setAmount("");
       setQrString("");
     } catch (err) {
-      console.error(err);
-      alert("Error: " + (err instanceof Error ? err.message : "Unknown error"));
+      console.error("Full error:", err);
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      alert("Error creating request: " + errorMessage);
     } finally {
       setLoading(false);
     }
