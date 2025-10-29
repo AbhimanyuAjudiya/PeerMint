@@ -11,7 +11,6 @@ import {
   createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
 import { getProgram, getOrderPda, USDC_MINT } from "@/lib/anchor";
-import { shortenUrlWithFallback } from "@/lib/url-shortener";
 import { Upload, Loader2, ScanLine } from "lucide-react";
 import QRScannerComponent from "./qr-scanner";
 
@@ -33,23 +32,20 @@ export default function CreateRequest() {
       setLoading(true);
       setSuccess("");
 
-      // Shorten the QR string if it's too long
-      let finalQrString = qrString;
-      if (qrString.length > 200) {
-        console.log("QR string too long, shortening...");
-        finalQrString = await shortenUrlWithFallback(qrString);
-        console.log("Shortened QR:", finalQrString);
-        
-        if (finalQrString.length > 200) {
-          throw new Error("QR string still too long after shortening. Please use a shorter payment link.");
-        }
+      // With the updated program, we can now store up to 500 characters!
+      console.log("QR String length:", qrString.length);
+      
+      if (qrString.length > 500) {
+        throw new Error(`QR string too long (${qrString.length} chars). Maximum is 500 characters.`);
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const provider = new AnchorProvider(connection, wallet as any, {});
       const program = getProgram(provider);
 
-      const nonce = Date.now();
+      // Use a more unique nonce: timestamp + random number to prevent collisions
+      const nonce = Date.now() + Math.floor(Math.random() * 1000000);
+      
       const amountLamports = Math.floor(parseFloat(amount) * 1_000_000);
       const expiryTs = Math.floor(Date.now() / 1000) + parseInt(expiryHours) * 3600;
 
@@ -94,21 +90,25 @@ export default function CreateRequest() {
         console.log("Escrow ATA already exists");
       }
 
+      // Convert percentage to basis points (1% = 100 bps)
+      // Convert percentage to actual percentage value (e.g., 0.5% stays as 0.5)
+      const feePercentage = parseFloat(feeBps);
+
       console.log("Creating order with params:", {
         amount: amountLamports,
         expiry: expiryTs,
-        fee: parseInt(feeBps),
+        feePercentage: feePercentage,
         nonce,
-        qrString: finalQrString,
+        qrString: qrString,
       });
 
       const tx = await program.methods
         .createRequest(
           new BN(amountLamports),
           new BN(expiryTs),
-          parseInt(feeBps),
+          feePercentage,
           new BN(nonce),
-          finalQrString
+          qrString
         )
         .accounts({
           creator: wallet.publicKey,
@@ -187,17 +187,20 @@ export default function CreateRequest() {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium mb-2">
-              Fee (basis points)
+              Helper Fee (% of amount)
             </label>
             <input
               type="number"
               value={feeBps}
               onChange={(e) => setFeeBps(e.target.value)}
-              className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
-              placeholder="50"
+              className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
+              placeholder="0.5"
+              step="0.1"
+              min="0"
+              max="100"
             />
             <p className="text-xs text-gray-500 mt-1">
-              {(parseInt(feeBps) / 100).toFixed(2)}% fee
+              Percentage fee paid to the helper (e.g., 0.5 = 0.5%)
             </p>
           </div>
 

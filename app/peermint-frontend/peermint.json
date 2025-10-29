@@ -189,8 +189,8 @@
           "type": "i64"
         },
         {
-          "name": "fee_bps",
-          "type": "u16"
+          "name": "fee_percentage",
+          "type": "u8"
         },
         {
           "name": "nonce",
@@ -483,8 +483,8 @@
             }
           },
           {
-            "name": "fee_bps",
-            "type": "u16"
+            "name": "fee_percentage",
+            "type": "u8"
           },
           {
             "name": "arbiter",

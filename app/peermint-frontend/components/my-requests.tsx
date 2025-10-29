@@ -59,6 +59,11 @@ export default function MyRequests() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallet?.publicKey]);
 
+  const handleShowQR = (qrString: string) => {
+    // Since we're now storing the full URL on-chain (up to 500 chars), just show it directly
+    setShowQR(qrString);
+  };
+
   const handleMarkPaid = async (orderPubkey: PublicKey) => {
     if (!wallet) return;
 
@@ -208,7 +213,7 @@ export default function MyRequests() {
                 {order.account.qrString}
               </p>
               <button
-                onClick={() => setShowQR(order.account.qrString)}
+                onClick={() => handleShowQR(order.account.qrString)}
                 className="text-blue-600 hover:text-blue-700 text-sm font-medium whitespace-nowrap"
               >
                 Show QR
