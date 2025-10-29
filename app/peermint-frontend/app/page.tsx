@@ -3,7 +3,7 @@
 import WalletButton from "@/components/wallet-button";
 import CreateRequest from "@/components/create-request";
 import OrderList from "@/components/order-list";
-import MyOrders from "@/components/my-orders";
+import MyRequests from "@/components/my-requests";
 import { Coins } from "lucide-react";
 
 export default function Home() {
@@ -54,7 +54,8 @@ export default function Home() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* My Requests Section */}
         <div className="mb-8">
-          <MyOrders />
+          <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-white">My Requests</h2>
+          <MyRequests />
         </div>
 
         <div className="grid lg:grid-cols-2 gap-8">
