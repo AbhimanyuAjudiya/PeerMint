@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, FileText, Search } from "lucide-react";
+import { Home, FileText, Search, PlusCircle } from "lucide-react";
 import WalletButton from "./wallet-button";
 
 export default function Header() {
@@ -10,6 +10,7 @@ export default function Header() {
 
   const navLinks = [
     { href: "/", label: "Home", icon: Home },
+    { href: "/create", label: "Create", icon: PlusCircle },
     { href: "/my-requests", label: "My Requests", icon: FileText },
     { href: "/explore", label: "Explore", icon: Search },
   ];
