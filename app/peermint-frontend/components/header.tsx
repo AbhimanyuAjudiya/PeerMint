@@ -2,85 +2,99 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, FileText, Search, PlusCircle } from "lucide-react";
+import { Menu, X } from "lucide-react";
+import { useState } from "react";
 import WalletButton from "./wallet-button";
 
 export default function Header() {
   const pathname = usePathname();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navLinks = [
-    { href: "/", label: "Home", icon: Home },
-    { href: "/create", label: "Create", icon: PlusCircle },
-    { href: "/my-requests", label: "My Requests", icon: FileText },
-    { href: "/explore", label: "Explore", icon: Search },
+    { href: "/", label: "Home" },
+    { href: "/create", label: "Create" },
+    { href: "/my-requests", label: "My Requests" },
+    { href: "/explore", label: "Explore" },
   ];
 
   return (
-    <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
+    <header className="sticky top-0 z-50 w-full border-b border-gray-200/50 bg-white/80 backdrop-blur-xl">
+      <nav className="container mx-auto px-6 py-4">
+        <div className="flex items-center justify-between">
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-xl">P</span>
-            </div>
-            <span className="text-xl font-bold text-gray-900 dark:text-white">
+          <Link href="/" className="flex items-center gap-3 group">
+            <div className="w-10 h-10 bg-gradient-to-br from-[#8FFF73] to-[#E8E0FF] rounded-xl group-hover:scale-110 transition-transform duration-300 shadow-lg"></div>
+            <span className="text-2xl font-bold bg-gradient-to-r from-[#0D0D0D] to-[#1a1a1a] bg-clip-text text-transparent">
               PeerMint
             </span>
           </Link>
 
-          {/* Navigation */}
-          <nav className="hidden md:flex items-center gap-1">
-            {navLinks.map((link) => {
-              const Icon = link.icon;
-              const isActive = pathname === link.href;
-              
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                    isActive
-                      ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200"
-                      : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  {link.label}
-                </Link>
-              );
-            })}
-          </nav>
-
-          {/* Wallet Button */}
-          <div className="flex items-center gap-4">
-            <WalletButton />
-          </div>
-        </div>
-
-        {/* Mobile Navigation */}
-        <nav className="md:hidden flex items-center gap-1 pb-3 overflow-x-auto">
-          {navLinks.map((link) => {
-            const Icon = link.icon;
-            const isActive = pathname === link.href;
-            
-            return (
+          {/* Desktop Navigation */}
+          <div className="hidden md:flex items-center gap-8">
+            {navLinks.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-                  isActive
-                    ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200"
-                    : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                className={`font-medium transition-all duration-300 relative group ${
+                  pathname === link.href
+                    ? "text-[#10b981]"
+                    : "text-gray-700 hover:text-[#10b981]"
                 }`}
               >
-                <Icon className="w-4 h-4" />
                 {link.label}
+                <span
+                  className={`absolute -bottom-1 left-0 h-0.5 bg-gradient-to-r from-[#8FFF73] to-[#10b981] transition-all duration-300 ${
+                    pathname === link.href ? "w-full" : "w-0 group-hover:w-full"
+                  }`}
+                ></span>
               </Link>
-            );
-          })}
-        </nav>
-      </div>
+            ))}
+          </div>
+
+          {/* Wallet Button - Desktop */}
+          <div className="hidden md:block">
+            <WalletButton />
+          </div>
+
+          {/* Mobile Menu Button */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            aria-label="Toggle menu"
+          >
+            {mobileMenuOpen ? (
+              <X className="w-6 h-6" />
+            ) : (
+              <Menu className="w-6 h-6" />
+            )}
+          </button>
+        </div>
+
+        {/* Mobile Navigation */}
+        {mobileMenuOpen && (
+          <div className="md:hidden mt-4 pb-4 border-t border-gray-200 pt-4 animate-fade-in">
+            <div className="flex flex-col gap-4">
+              {navLinks.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`font-medium px-4 py-2 rounded-lg transition-all ${
+                    pathname === link.href
+                      ? "bg-gradient-to-r from-[#E9FCD4] to-[#D1FAE5] text-[#10b981]"
+                      : "text-gray-700 hover:bg-gray-100"
+                  }`}
+                >
+                  {link.label}
+                </Link>
+              ))}
+              <div className="px-4 pt-2">
+                <WalletButton />
+              </div>
+            </div>
+          </div>
+        )}
+      </nav>
     </header>
   );
 }

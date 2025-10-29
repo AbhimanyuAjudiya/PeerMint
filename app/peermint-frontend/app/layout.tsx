@@ -1,22 +1,18 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { WalletContextProvider } from "@/components/wallet-provider";
 import Header from "@/components/header";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "PeerMint - P2P Fiat to Crypto",
-  description: "Decentralized fiat to crypto exchange with escrow",
+  title: "PeerMint - Travel Free. They Pay You Crypto.",
+  description: "Seamless global travel payments powered by crypto, no borders, no banks.",
 };
 
 export default function RootLayout({
@@ -27,7 +23,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-50 dark:bg-gray-900`}
+        className={`${inter.variable} font-sans antialiased bg-white`}
       >
         <WalletContextProvider>
           <Header />

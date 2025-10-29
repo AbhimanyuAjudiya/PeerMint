@@ -115,9 +115,20 @@ export default function OrderList() {
                   <p className="text-sm text-gray-500">
                     {order.publicKey.toBase58().slice(0, 8)}...
                   </p>
-                  <p className="text-2xl font-bold">
-                    ${(order.account.amount / 1_000_000).toFixed(2)}
-                  </p>
+                  {order.account.inrAmount && order.account.inrAmount > 0 ? (
+                    <>
+                      <p className="text-2xl font-bold text-green-600">
+                        ₹{(order.account.inrAmount / 100).toFixed(2)}
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        ≈ ${(order.account.amount / 1_000_000).toFixed(2)} USDC
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-2xl font-bold">
+                      ${(order.account.amount / 1_000_000).toFixed(2)} USDC
+                    </p>
+                  )}
                 </div>
                 {getStatusBadge(order.account.status)}
               </div>

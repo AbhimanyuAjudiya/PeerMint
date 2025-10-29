@@ -17,6 +17,7 @@ pub mod peermint {
     pub fn create_request(
         ctx: Context<CreateRequest>,
         amount: u64,
+        inr_amount: u64,
         expiry_ts: i64,
         fee_percentage: u8,
         nonce: u64,
@@ -25,6 +26,7 @@ pub mod peermint {
         instructions::create_request::create_request(
             ctx,
             amount,
+            inr_amount,
             expiry_ts,
             fee_percentage,
             nonce,

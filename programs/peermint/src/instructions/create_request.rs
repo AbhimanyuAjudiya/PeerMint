@@ -5,7 +5,7 @@ use crate::state::Order;
 use crate::errors::ErrorCode;
 
 #[derive(Accounts)]
-#[instruction(amount: u64, expiry_ts: i64, fee_percentage: u8, nonce: u64, qr_string: String)]
+#[instruction(amount: u64, inr_amount: u64, expiry_ts: i64, fee_percentage: u8, nonce: u64, qr_string: String)]
 pub struct CreateRequest<'info> {
     /// payer/creator
     #[account(mut)]
@@ -40,12 +40,14 @@ pub struct CreateRequest<'info> {
 pub fn create_request(
     ctx: Context<CreateRequest>,
     amount: u64,
+    inr_amount: u64,
     expiry_ts: i64,
     fee_percentage: u8,
     nonce: u64,
     qr_string: String,
 ) -> Result<()> {
     require!(amount > 0, ErrorCode::InvalidAmount);
+    require!(inr_amount > 0, ErrorCode::InvalidAmount);
     require!(fee_percentage <= 100, ErrorCode::InvalidFee);
     require!(qr_string.len() <= 500, ErrorCode::QRTooLong); // Increased from 200 to 500
 
@@ -65,6 +67,7 @@ pub fn create_request(
     order.helper = None;
     order.token_mint = ctx.accounts.mint.key();
     order.amount = amount;
+    order.inr_amount = inr_amount; // Store INR amount
     order.status = 0;
     order.created_at = Clock::get()?.unix_timestamp;
     order.expiry_ts = expiry_ts;

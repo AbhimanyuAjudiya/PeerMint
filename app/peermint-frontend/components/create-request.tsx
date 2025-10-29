@@ -22,13 +22,19 @@ let globalLockTimestamp = 0;
 export default function CreateRequest() {
   const { connection } = useConnection();
   const wallet = useWallet();
-  const [amount, setAmount] = useState("");
+  const [inrAmount, setInrAmount] = useState(""); // Changed to INR
   const [qrString, setQrString] = useState("");
   const [feeBps, setFeeBps] = useState("50");
   const [expiryMinutes, setExpiryMinutes] = useState("30");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
   const [showScanner, setShowScanner] = useState(false);
+  
+  // Exchange rate: 1 USDC = 83.09 INR (you can make this dynamic later)
+  const USDC_TO_INR_RATE = 83.09;
+  
+  // Calculate USDC amount from INR
+  const usdcAmount = inrAmount ? (parseFloat(inrAmount) / USDC_TO_INR_RATE).toFixed(6) : "0";
 
   // Use a ref to track last nonce to ensure uniqueness
   const lastNonceRef = useRef(0);
@@ -125,8 +131,17 @@ export default function CreateRequest() {
       // Generate unique nonce to prevent transaction collisions
       const nonce = generateUniqueNonce();
       
-      const amountLamports = Math.floor(parseFloat(amount) * 1_000_000);
+      // Calculate USDC amount from INR input
+      const usdcAmountValue = parseFloat(inrAmount) / USDC_TO_INR_RATE;
+      const amountLamports = Math.floor(usdcAmountValue * 1_000_000);
       const expiryTs = Math.floor(Date.now() / 1000) + parseInt(expiryMinutes) * 60; // Convert minutes to seconds
+
+      console.log("Converting INR to USDC:", {
+        inrAmount,
+        usdcAmount: usdcAmountValue,
+        amountLamports,
+        exchangeRate: USDC_TO_INR_RATE
+      });
 
       const [orderPda] = getOrderPda(wallet.publicKey, nonce);
       
@@ -202,9 +217,13 @@ export default function CreateRequest() {
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
       console.log("Using blockhash:", blockhash);
 
+      // Convert INR to paise (1 INR = 100 paise)
+      const inrAmountPaise = Math.floor(parseFloat(inrAmount) * 100);
+
       const txBuilder = program.methods
         .createRequest(
           new BN(amountLamports),
+          new BN(inrAmountPaise),
           new BN(expiryTs),
           feePercentage,
           new BN(nonce),
@@ -254,7 +273,7 @@ export default function CreateRequest() {
       setSuccess(`Request created! TX: ${signature.slice(0, 8)}...`);
       
       // Clear form only after successful transaction
-      setAmount("");
+      setInrAmount("");
       setQrString("");
       setFeeBps("50");
     } catch (err) {
@@ -309,17 +328,22 @@ export default function CreateRequest() {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-2">
-            Amount (USDC)
+            Amount (INR) 🇮🇳
           </label>
           <input
             type="number"
             step="0.01"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            value={inrAmount}
+            onChange={(e) => setInrAmount(e.target.value)}
             className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
-            placeholder="10.00"
+            placeholder="1000.00"
             disabled={loading}
           />
+          {inrAmount && (
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+              ≈ {usdcAmount} USDC will be locked (@ ₹{USDC_TO_INR_RATE}/USDC)
+            </p>
+          )}
         </div>
 
         <div>
@@ -392,7 +416,7 @@ export default function CreateRequest() {
 
         <button
           type="submit"
-          disabled={loading || !wallet.connected || !amount || !qrString}
+          disabled={loading || !wallet.connected || !inrAmount || !qrString}
           className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {loading ? (

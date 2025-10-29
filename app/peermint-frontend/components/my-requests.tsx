@@ -200,15 +200,29 @@ export default function MyRequests() {
 
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Amount</p>
-              <p className="font-medium text-gray-900 dark:text-white">
-                {order.account.amount 
-                  ? (Number(order.account.amount) / 1_000_000).toFixed(2)
-                  : '0.00'} USDC
-              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Helper Pays (INR)</p>
+              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+              {(order.account as any).inrAmount && (order.account as any).inrAmount > 0 ? (
+                <>
+                  <p className="font-bold text-2xl text-green-600">
+                    ₹{(Number((order.account as any).inrAmount) / 100).toFixed(2)}
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    ≈ {order.account.amount 
+                      ? (Number(order.account.amount) / 1_000_000).toFixed(2)
+                      : '0.00'} USDC in escrow
+                  </p>
+                </>
+              ) : (
+                <p className="font-medium text-gray-900 dark:text-white">
+                  {order.account.amount 
+                    ? (Number(order.account.amount) / 1_000_000).toFixed(2)
+                    : '0.00'} USDC
+                </p>
+              )}
             </div>
             <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Fee</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Helper Fee</p>
               <p className="font-medium text-gray-900 dark:text-white">
                 {order.account.feePercentage || 0}%
               </p>

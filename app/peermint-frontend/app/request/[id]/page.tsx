@@ -16,6 +16,7 @@ interface OrderAccount {
   creator: PublicKey;
   helper: PublicKey | null;
   amount: BN;
+  inrAmount?: BN; // INR amount in paise (100 paise = 1 INR)
   feePercentage: BN | number;
   expiry: BN | number;
   qrString: string;
@@ -318,30 +319,90 @@ export default function RequestDetailPage() {
           {/* Content */}
           <div className="p-6 space-y-6">
             {/* Amount Details */}
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Requested Amount</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {amount.toFixed(2)} USDC
-                </p>
-              </div>
-              <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Helper Fee ({feePercentage}%)</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {feeAmount.toFixed(2)} USDC
-                </p>
-              </div>
-            </div>
+            {order.account.inrAmount && order.account.inrAmount.toNumber() > 0 ? (
+              <>
+                {/* New format with INR */}
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 p-6 rounded-lg border-2 border-green-200 dark:border-green-800">
+                  <p className="text-sm text-green-700 dark:text-green-300 mb-2 font-semibold">
+                    💰 Helper Needs to Pay (INR)
+                  </p>
+                  <p className="text-4xl font-bold text-green-600 dark:text-green-400 mb-2">
+                    ₹{(order.account.inrAmount.toNumber() / 100).toFixed(2)}
+                  </p>
+                  <p className="text-sm text-green-600 dark:text-green-400">
+                    Exchange Rate: ₹83.09 per USDC
+                  </p>
+                </div>
 
-            <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
-              <p className="text-sm text-blue-800 dark:text-blue-300 mb-1">Total in Escrow</p>
-              <p className="text-xl font-bold text-blue-900 dark:text-blue-100">
-                {totalDeposited.toFixed(2)} USDC
-              </p>
-              <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                Includes amount + fee
-              </p>
-            </div>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">USDC in Escrow</p>
+                    <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                      {amount.toFixed(2)} USDC
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Helper Fee ({feePercentage}%)</p>
+                    <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                      {feeAmount.toFixed(2)} USDC
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <p className="text-sm text-blue-800 dark:text-blue-300 mb-1">Total USDC Locked</p>
+                  <p className="text-xl font-bold text-blue-900 dark:text-blue-100">
+                    {totalDeposited.toFixed(2)} USDC
+                  </p>
+                  <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                    Includes base amount + helper fee
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Old format without INR - Calculate estimated INR */}
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 p-6 rounded-lg border-2 border-green-200 dark:border-green-800">
+                  <p className="text-sm text-green-700 dark:text-green-300 mb-2 font-semibold">
+                    💰 Helper Needs to Pay (Estimated INR)
+                  </p>
+                  <p className="text-4xl font-bold text-green-600 dark:text-green-400 mb-2">
+                    ₹{(amount * 83.09).toFixed(2)}
+                  </p>
+                  <p className="text-sm text-green-600 dark:text-green-400">
+                    Estimated @ ₹83.09 per USDC
+                  </p>
+                  <p className="text-xs text-orange-600 dark:text-orange-400 mt-2">
+                    ⚠️ Old request - INR calculated from USDC amount
+                  </p>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">USDC in Escrow</p>
+                    <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                      {amount.toFixed(2)} USDC
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Helper Fee ({feePercentage}%)</p>
+                    <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                      {feeAmount.toFixed(2)} USDC
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <p className="text-sm text-blue-800 dark:text-blue-300 mb-1">Total USDC Locked</p>
+                  <p className="text-xl font-bold text-blue-900 dark:text-blue-100">
+                    {totalDeposited.toFixed(2)} USDC
+                  </p>
+                  <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                    Includes base amount + helper fee
+                  </p>
+                </div>
+              </>
+            )}
 
             {/* Creator & Helper Info */}
             <div className="grid md:grid-cols-2 gap-4">

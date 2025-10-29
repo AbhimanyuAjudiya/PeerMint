@@ -160,10 +160,24 @@ export default function MyOrders() {
                         {status.text}
                       </span>
                     </div>
-                    <p className="text-2xl font-bold">{amount} USDC</p>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      Fee: {fee / 100}%
-                    </p>
+                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                    {(order.account as any).inrAmount && (order.account as any).inrAmount > 0 ? (
+                      <>
+                        <p className="text-2xl font-bold text-green-600">
+                          ₹{(Number((order.account as any).inrAmount) / 100).toFixed(2)}
+                        </p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                          ≈ {amount} USDC • Fee: {fee / 100}%
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-2xl font-bold">{amount} USDC</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                          Fee: {fee / 100}%
+                        </p>
+                      </>
+                    )}
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-gray-500">
