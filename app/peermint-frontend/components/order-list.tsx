@@ -4,12 +4,9 @@ import { useState, useEffect } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { AnchorProvider } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
-import {
-  TOKEN_PROGRAM_ID,
-  getAssociatedTokenAddress,
-} from "@solana/spl-token";
-import { getProgram, USDC_MINT } from "@/lib/anchor";
-import { CheckCircle, Clock, XCircle, Loader2, QrCode } from "lucide-react";
+import { getProgram } from "@/lib/anchor";
+import { CheckCircle, Clock, XCircle, Loader2, QrCode, ExternalLink } from "lucide-react";
+import Link from "next/link";
 import QRDisplay from "./qr-display";
 
 interface Order {
@@ -22,7 +19,6 @@ export default function OrderList() {
   const wallet = useWallet();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showQR, setShowQR] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,112 +36,29 @@ export default function OrderList() {
       const provider = new AnchorProvider(connection, wallet as any, {});
       const program = getProgram(provider);
 
+      // Fetch all orders with error handling for incompatible accounts
       const allOrders = await program.account.order.all();
-      setOrders(allOrders);
+      
+      // Filter out any potentially corrupted or incompatible orders
+      const validOrders = allOrders.filter((order: Order) => {
+        try {
+          // Validate that the order has required fields
+          return order.account && order.account.creator && order.publicKey;
+        } catch {
+          console.warn("Skipping incompatible order:", order.publicKey?.toString());
+          return false;
+        }
+      });
+      
+      setOrders(validOrders);
     } catch (err) {
-      console.error(err);
+      console.error("Error fetching orders:", err);
+      // Show user-friendly message about incompatible accounts
+      if (err instanceof Error && err.message.includes("failed to deserialize")) {
+        alert("Some old requests are incompatible with the current program version. They will be skipped.");
+      }
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleJoin = async (orderPubkey: PublicKey) => {
-    if (!wallet.publicKey || !wallet.signTransaction) return;
-
-    try {
-      setActionLoading(orderPubkey.toBase58());
-      const provider = new AnchorProvider(connection, wallet as any, {});
-      const program = getProgram(provider);
-
-      await program.methods
-        .joinRequest()
-        .accounts({
-          helper: wallet.publicKey,
-          order: orderPubkey,
-        })
-        .rpc();
-
-      await fetchOrders();
-      alert("Joined successfully!");
-    } catch (err) {
-      console.error(err);
-      alert("Error: " + (err instanceof Error ? err.message : "Unknown error"));
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleMarkPaid = async (orderPubkey: PublicKey) => {
-    if (!wallet.publicKey || !wallet.signTransaction) return;
-
-    try {
-      setActionLoading(orderPubkey.toBase58());
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const provider = new AnchorProvider(connection, wallet as any, {});
-      const program = getProgram(provider);
-
-      await program.methods
-        .markPaid(null)
-        .accounts({
-          helper: wallet.publicKey,
-          order: orderPubkey,
-        })
-        .rpc();
-
-      await fetchOrders();
-      alert("Marked as paid!");
-    } catch (err) {
-      console.error(err);
-      alert("Error: " + (err instanceof Error ? err.message : "Unknown error"));
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleRelease = async (orderPubkey: PublicKey, order: Order["account"]) => {
-    if (!wallet.publicKey || !wallet.signTransaction) return;
-
-    try {
-      setActionLoading(orderPubkey.toBase58());
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const provider = new AnchorProvider(connection, wallet as any, {});
-      const program = getProgram(provider);
-
-      const escrowAta = await getAssociatedTokenAddress(
-        USDC_MINT,
-        orderPubkey,
-        true
-      );
-
-      const helperAta = await getAssociatedTokenAddress(
-        USDC_MINT,
-        order.helper
-      );
-
-      const feeReceiverAta = await getAssociatedTokenAddress(
-        USDC_MINT,
-        order.creator
-      );
-
-      await program.methods
-        .acknowledgeAndRelease()
-        .accounts({
-          creator: wallet.publicKey,
-          order: orderPubkey,
-          escrowAta,
-          helperAta,
-          feeReceiverAta,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .rpc();
-
-      await fetchOrders();
-      alert("Funds released!");
-    } catch (err) {
-      console.error(err);
-      alert("Error: " + (err instanceof Error ? err.message : "Unknown error"));
-    } finally {
-      setActionLoading(null);
     }
   };
 
@@ -226,44 +139,13 @@ export default function OrderList() {
                 </div>
               </div>
 
-              <div className="flex gap-2">
-                {order.account.status === 0 &&
-                  !order.account.creator.equals(wallet.publicKey!) && (
-                    <button
-                      onClick={() => handleJoin(order.publicKey)}
-                      disabled={actionLoading === order.publicKey.toBase58()}
-                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded disabled:opacity-50"
-                    >
-                      {actionLoading === order.publicKey.toBase58() ? "..." : "Join"}
-                    </button>
-                  )}
-
-                {order.account.status === 1 &&
-                  order.account.helper?.equals(wallet.publicKey!) && (
-                    <button
-                      onClick={() => handleMarkPaid(order.publicKey)}
-                      disabled={actionLoading === order.publicKey.toBase58()}
-                      className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded disabled:opacity-50"
-                    >
-                      {actionLoading === order.publicKey.toBase58()
-                        ? "..."
-                        : "Mark Paid"}
-                    </button>
-                  )}
-
-                {order.account.status === 2 &&
-                  order.account.creator.equals(wallet.publicKey!) && (
-                    <button
-                      onClick={() => handleRelease(order.publicKey, order.account)}
-                      disabled={actionLoading === order.publicKey.toBase58()}
-                      className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50"
-                    >
-                      {actionLoading === order.publicKey.toBase58()
-                        ? "..."
-                        : "Release Funds"}
-                    </button>
-                  )}
-              </div>
+              <Link
+                href={`/request/${order.publicKey.toBase58()}`}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium flex items-center justify-center gap-2"
+              >
+                <ExternalLink className="w-4 h-4" />
+                View Details
+              </Link>
             </div>
           ))}
         </div>

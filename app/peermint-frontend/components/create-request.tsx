@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { AnchorProvider, BN } from "@coral-xyz/anchor";
 import { SystemProgram, Transaction } from "@solana/web3.js";
@@ -20,17 +20,62 @@ export default function CreateRequest() {
   const [amount, setAmount] = useState("");
   const [qrString, setQrString] = useState("");
   const [feeBps, setFeeBps] = useState("50");
-  const [expiryHours, setExpiryHours] = useState("24");
+  const [expiryMinutes, setExpiryMinutes] = useState("30");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
   const [showScanner, setShowScanner] = useState(false);
 
+  // Use a ref to track last nonce to ensure uniqueness
+  const lastNonceRef = useRef(0);
+  const processingRef = useRef(false);
+  const counterRef = useRef(0);
+  const lastTransactionTimeRef = useRef(0);
+
+  const generateUniqueNonce = () => {
+    // Increment counter for extra uniqueness
+    counterRef.current += 1;
+    
+    // Use high-resolution timestamp + random + counter to ensure uniqueness
+    const timestamp = Math.floor(performance.now() * 1000); // Microseconds
+    const random = Math.floor(Math.random() * 1000000);
+    const counter = counterRef.current;
+    let nonce = timestamp + random + counter;
+    
+    // Ensure it's different from the last one
+    let attempts = 0;
+    while (nonce === lastNonceRef.current && attempts < 10) {
+      nonce = Math.floor(performance.now() * 1000) + Math.floor(Math.random() * 1000000) + counterRef.current;
+      attempts++;
+    }
+    
+    lastNonceRef.current = nonce;
+    console.log("Generated nonce:", nonce, "counter:", counter);
+    return nonce;
+  };
+
   const handleCreate = async () => {
     if (!wallet.publicKey || !wallet.signTransaction) return;
+    
+    // Prevent double-submission with ref (more reliable than state)
+    if (processingRef.current) {
+      console.log("Already processing, ignoring duplicate call");
+      return;
+    }
+    
+    // Cooldown: prevent rapid successive transactions (within 3 seconds)
+    const now = Date.now();
+    if (now - lastTransactionTimeRef.current < 3000) {
+      alert("Please wait a moment before creating another request.");
+      return;
+    }
 
     try {
+      processingRef.current = true;
       setLoading(true);
       setSuccess("");
+      
+      // Small delay to ensure ref is set before any potential retry
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       // With the updated program, we can now store up to 500 characters!
       console.log("QR String length:", qrString.length);
@@ -40,14 +85,18 @@ export default function CreateRequest() {
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const provider = new AnchorProvider(connection, wallet as any, {});
+      const provider = new AnchorProvider(connection, wallet as any, {
+        commitment: 'confirmed',
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
       const program = getProgram(provider);
 
-      // Use a more unique nonce: timestamp + random number to prevent collisions
-      const nonce = Date.now() + Math.floor(Math.random() * 1000000);
+      // Generate unique nonce to prevent transaction collisions
+      const nonce = generateUniqueNonce();
       
       const amountLamports = Math.floor(parseFloat(amount) * 1_000_000);
-      const expiryTs = Math.floor(Date.now() / 1000) + parseInt(expiryHours) * 3600;
+      const expiryTs = Math.floor(Date.now() / 1000) + parseInt(expiryMinutes) * 60; // Convert minutes to seconds
 
       const [orderPda] = getOrderPda(wallet.publicKey, nonce);
       
@@ -102,6 +151,10 @@ export default function CreateRequest() {
         qrString: qrString,
       });
 
+      // Get fresh blockhash to ensure transaction uniqueness
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      console.log("Using blockhash:", blockhash);
+
       const tx = await program.methods
         .createRequest(
           new BN(amountLamports),
@@ -120,18 +173,42 @@ export default function CreateRequest() {
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
-        .rpc();
+        .rpc({
+          skipPreflight: false,
+          commitment: 'confirmed',
+        });
 
       console.log("Transaction successful:", tx);
+      
+      // Wait for confirmation
+      await connection.confirmTransaction({
+        signature: tx,
+        blockhash,
+        lastValidBlockHeight,
+      }, 'confirmed');
+      
+      // Update last transaction time for cooldown
+      lastTransactionTimeRef.current = Date.now();
+      
       setSuccess(`Request created! TX: ${tx.slice(0, 8)}...`);
+      
+      // Clear form only after successful transaction
       setAmount("");
       setQrString("");
+      setFeeBps("50");
     } catch (err) {
       console.error("Full error:", err);
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      alert("Error creating request: " + errorMessage);
+      
+      // Check if it's a duplicate transaction error
+      if (errorMessage.includes("already been processed")) {
+        alert("This transaction was already submitted. Please wait a moment and try creating a new request.");
+      } else {
+        alert("Error creating request: " + errorMessage);
+      }
     } finally {
       setLoading(false);
+      processingRef.current = false;
     }
   };
 
@@ -206,21 +283,24 @@ export default function CreateRequest() {
 
           <div>
             <label className="block text-sm font-medium mb-2">
-              Expiry (hours)
+              Expiry (minutes)
             </label>
             <input
               type="number"
-              value={expiryHours}
-              onChange={(e) => setExpiryHours(e.target.value)}
+              value={expiryMinutes}
+              onChange={(e) => setExpiryMinutes(e.target.value)}
               className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
-              placeholder="24"
+              placeholder="30"
             />
+            <p className="text-xs text-gray-500 mt-1">
+              How long before the request expires
+            </p>
           </div>
         </div>
 
         <button
           onClick={handleCreate}
-          disabled={loading || !wallet.connected}
+          disabled={loading || !wallet.connected || !amount || !qrString}
           className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {loading ? (

@@ -1,29 +1,10 @@
 "use client";
 
-import WalletButton from "@/components/wallet-button";
 import CreateRequest from "@/components/create-request";
-import OrderList from "@/components/order-list";
-import MyRequests from "@/components/my-requests";
-import { Coins } from "lucide-react";
 
 export default function Home() {
   return (
     <main className="min-h-screen">
-      {/* Header */}
-      <nav className="bg-white dark:bg-gray-800 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-3">
-              <Coins className="w-8 h-8 text-blue-600" />
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                PeerMint
-              </h1>
-            </div>
-            <WalletButton />
-          </div>
-        </div>
-      </nav>
-
       {/* Hero Section */}
       <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white py-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
@@ -52,15 +33,10 @@ export default function Home() {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* My Requests Section */}
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-white">My Requests</h2>
-          <MyRequests />
-        </div>
-
-        <div className="grid lg:grid-cols-2 gap-8">
+        {/* Create Request Section */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-white">Create Request</h2>
           <CreateRequest />
-          <OrderList />
         </div>
 
         {/* How It Works */}

@@ -44,10 +44,6 @@
           "writable": true
         },
         {
-          "name": "fee_receiver_ata",
-          "writable": true
-        },
-        {
           "name": "token_program",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
@@ -88,10 +84,6 @@
         },
         {
           "name": "helper_ata",
-          "writable": true
-        },
-        {
-          "name": "fee_receiver_ata",
           "writable": true
         },
         {
@@ -247,7 +239,7 @@
       ],
       "accounts": [
         {
-          "name": "helper",
+          "name": "signer",
           "writable": true,
           "signer": true
         },
