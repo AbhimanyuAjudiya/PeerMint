@@ -1,6 +1,6 @@
 "use client";
 
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import WalletButton from "@/components/wallet-button";
 import CreateRequest from "@/components/create-request";
 import OrderList from "@/components/order-list";
 import { Coins } from "lucide-react";
@@ -18,7 +18,7 @@ export default function Home() {
                 PeerMint
               </h1>
             </div>
-            <WalletMultiButton />
+            <WalletButton />
           </div>
         </div>
       </nav>
