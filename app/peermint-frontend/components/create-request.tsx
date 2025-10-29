@@ -14,6 +14,11 @@ import { getProgram, getOrderPda, USDC_MINT } from "@/lib/anchor";
 import { Upload, Loader2, ScanLine } from "lucide-react";
 import QRScannerComponent from "./qr-scanner";
 
+// Global lock to prevent React Strict Mode double-execution
+// This is outside the component so it's shared across all renders
+let globalTransactionLock = false;
+let globalLockTimestamp = 0;
+
 export default function CreateRequest() {
   const { connection } = useConnection();
   const wallet = useWallet();
@@ -30,6 +35,8 @@ export default function CreateRequest() {
   const processingRef = useRef(false);
   const counterRef = useRef(0);
   const lastTransactionTimeRef = useRef(0);
+  const lastSignatureRef = useRef<string | null>(null);
+  const activeTransactionRef = useRef<string | null>(null); // Track active transaction ID
 
   const generateUniqueNonce = () => {
     // Increment counter for extra uniqueness
@@ -56,22 +63,46 @@ export default function CreateRequest() {
   const handleCreate = async () => {
     if (!wallet.publicKey || !wallet.signTransaction) return;
     
+    // FIRST: Check global lock (prevents React Strict Mode double-execution)
+    const now = Date.now();
+    if (globalTransactionLock && (now - globalLockTimestamp) < 10000) {
+      console.log("🚫 GLOBAL LOCK: Another transaction is in progress, blocking this call");
+      return;
+    }
+    
+    // Generate unique transaction ID for this attempt
+    const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    
     // Prevent double-submission with ref (more reliable than state)
     if (processingRef.current) {
       console.log("Already processing, ignoring duplicate call");
       return;
     }
     
-    // Cooldown: prevent rapid successive transactions (within 3 seconds)
-    const now = Date.now();
-    if (now - lastTransactionTimeRef.current < 3000) {
+    // Check if this exact transaction is already running
+    if (activeTransactionRef.current) {
+      console.log("Transaction already in progress:", activeTransactionRef.current);
+      return;
+    }
+    
+    // Cooldown: prevent rapid successive transactions (within 5 seconds)
+    if (now - lastTransactionTimeRef.current < 5000) {
+      console.log("Cooldown active, ignoring call");
       alert("Please wait a moment before creating another request.");
       return;
     }
 
-    // Set processing flag IMMEDIATELY before any async operations
+    // Set ALL locks IMMEDIATELY before any async operations (including global)
+    globalTransactionLock = true;
+    globalLockTimestamp = now;
     processingRef.current = true;
+    activeTransactionRef.current = txId;
     setLoading(true);
+    
+    // Also set the transaction time NOW to prevent race condition
+    lastTransactionTimeRef.current = now;
+    
+    console.log("✅ Starting transaction:", txId);
 
     try {
       setSuccess("");
@@ -115,25 +146,42 @@ export default function CreateRequest() {
       console.log("Escrow ATA:", escrowAta.toString());
 
       // Check if escrow ATA exists, create if it doesn't
-      const escrowInfo = await connection.getAccountInfo(escrowAta);
+      let escrowInfo = await connection.getAccountInfo(escrowAta);
       if (!escrowInfo) {
         console.log("Creating escrow token account...");
-        const createAtaIx = createAssociatedTokenAccountInstruction(
-          wallet.publicKey, // payer
-          escrowAta,        // ata
-          orderPda,         // owner (PDA)
-          USDC_MINT        // mint
-        );
         
-        const createAtaTx = new Transaction().add(createAtaIx);
-        const { blockhash } = await connection.getLatestBlockhash();
-        createAtaTx.recentBlockhash = blockhash;
-        createAtaTx.feePayer = wallet.publicKey;
-        
-        const signedTx = await wallet.signTransaction(createAtaTx);
-        const createAtaSig = await connection.sendRawTransaction(signedTx.serialize());
-        await connection.confirmTransaction(createAtaSig);
-        console.log("Escrow ATA created:", createAtaSig);
+        try {
+          const createAtaIx = createAssociatedTokenAccountInstruction(
+            wallet.publicKey, // payer
+            escrowAta,        // ata
+            orderPda,         // owner (PDA)
+            USDC_MINT        // mint
+          );
+          
+          const createAtaTx = new Transaction().add(createAtaIx);
+          const { blockhash: ataBlockhash } = await connection.getLatestBlockhash('finalized');
+          createAtaTx.recentBlockhash = ataBlockhash;
+          createAtaTx.feePayer = wallet.publicKey;
+          
+          const signedAtaTx = await wallet.signTransaction(createAtaTx);
+          const createAtaSig = await connection.sendRawTransaction(signedAtaTx.serialize(), {
+            skipPreflight: false,
+            maxRetries: 0,
+          });
+          
+          console.log("Escrow ATA creation transaction sent:", createAtaSig);
+          await connection.confirmTransaction(createAtaSig, 'confirmed');
+          console.log("Escrow ATA created successfully:", createAtaSig);
+        } catch (ataError) {
+          // Check if account was created despite the error (race condition)
+          console.log("Error creating ATA, checking if it exists now...", ataError);
+          escrowInfo = await connection.getAccountInfo(escrowAta);
+          if (!escrowInfo) {
+            // Account still doesn't exist, this is a real error
+            throw ataError;
+          }
+          console.log("Escrow ATA exists now (probably created by another call)");
+        }
       } else {
         console.log("Escrow ATA already exists");
       }
@@ -190,6 +238,9 @@ export default function CreateRequest() {
 
       console.log("Transaction sent:", signature);
       
+      // Track this signature to prevent re-submission
+      lastSignatureRef.current = signature;
+      
       // Wait for confirmation
       await connection.confirmTransaction({
         signature: signature,
@@ -210,15 +261,36 @@ export default function CreateRequest() {
       console.error("Full error:", err);
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
       
-      // Check if it's a duplicate transaction error
-      if (errorMessage.includes("already been processed")) {
-        alert("This transaction was already submitted. Please wait a moment and try creating a new request.");
+      // Check for specific error types
+      if (errorMessage.includes("insufficient funds") || errorMessage.includes("custom program error: 0x1")) {
+        alert("Insufficient USDC in your wallet. Please ensure you have enough USDC tokens (on devnet) to create this request.");
+      } else if (errorMessage.includes("already been processed") || errorMessage.includes("This transaction has already been processed")) {
+        console.log("Duplicate transaction detected - this is likely from React Strict Mode in development");
+        // Don't show error if we already have a success message (transaction actually went through)
+        if (!success) {
+          alert("Transaction may have already been submitted. Please check your wallet and refresh the page.");
+        }
+      } else if (errorMessage.includes("User rejected")) {
+        alert("Transaction cancelled by user.");
+      } else if (errorMessage.includes("Attempt to debit an account but found no record of a prior credit")) {
+        alert("Your wallet doesn't have a USDC token account yet. Please get some devnet USDC first.");
       } else {
         alert("Error creating request: " + errorMessage);
       }
+      
+      // Reset transaction time on error so user can try again
+      lastTransactionTimeRef.current = 0;
     } finally {
+      console.log("🧹 Cleaning up transaction:", activeTransactionRef.current);
       setLoading(false);
       processingRef.current = false;
+      activeTransactionRef.current = null;
+      
+      // Release global lock after a short delay to ensure transaction is fully complete
+      setTimeout(() => {
+        globalTransactionLock = false;
+        console.log("🔓 Global lock released");
+      }, 1000);
     }
   };
 

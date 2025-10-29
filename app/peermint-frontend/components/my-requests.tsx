@@ -18,7 +18,7 @@ interface Order {
     helper: PublicKey | null;
     amount: BN;
     feePercentage: number;
-    expiryTs: BN | number;  // Changed from 'expiry' to 'expiryTs'
+    expiry: BN | number;
     qrString: string;
     status: number;
     nonce: BN;
@@ -179,66 +179,20 @@ export default function MyRequests() {
 
   return (
     <div className="space-y-4">
-      {myOrders.map((order) => {
-        // Check if order is expired (only show as expired if not completed)
-        const isExpired = (() => {
-          try {
-            // Don't show as expired if already completed (status 3)
-            if (order.account.status === 3) return false;
-            
-            if (!order.account.expiryTs) return false;
-            let expirySeconds: number;
-            if (typeof order.account.expiryTs === 'object' && 'toNumber' in order.account.expiryTs) {
-              expirySeconds = order.account.expiryTs.toNumber();
-            } else {
-              expirySeconds = Number(order.account.expiryTs);
-            }
-            const currentTime = Math.floor(Date.now() / 1000);
-            return currentTime > expirySeconds;
-          } catch {
-            return false;
-          }
-        })();
-
-        return (
+      {myOrders.map((order) => (
         <div
           key={order.publicKey.toString()}
-          className={`bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 border ${
-            isExpired ? 'border-red-300 dark:border-red-700' : 'border-gray-200 dark:border-gray-700'
-          }`}
+          className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 border border-gray-200 dark:border-gray-700"
         >
           <div className="flex justify-between items-start mb-4">
             <div>
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                 Request #{order.account.nonce?.toString() || 'N/A'}
               </h3>
-              <p className={`text-sm ${isExpired ? 'text-red-600 dark:text-red-400 font-medium' : 'text-gray-500 dark:text-gray-400'}`}>
-                {(() => {
-                  try {
-                    if (!order.account.expiryTs) return 'No expiry';
-                    
-                    // Handle BN or number type for expiryTs (Unix timestamp in seconds)
-                    let expirySeconds: number;
-                    if (typeof order.account.expiryTs === 'object' && 'toNumber' in order.account.expiryTs) {
-                      expirySeconds = order.account.expiryTs.toNumber();
-                    } else {
-                      expirySeconds = Number(order.account.expiryTs);
-                    }
-                    
-                    // Convert seconds to milliseconds for JavaScript Date
-                    const expiryDate = new Date(expirySeconds * 1000);
-                    
-                    // Check if valid date
-                    if (isNaN(expiryDate.getTime())) {
-                      return 'Invalid Date';
-                    }
-                    
-                    return expiryDate.toLocaleString() + (isExpired ? ' (EXPIRED)' : '');
-                  } catch (error) {
-                    console.error('Error formatting expiry date:', error);
-                    return 'Error displaying date';
-                  }
-                })()}
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {order.account.expiry 
+                  ? new Date(Number(order.account.expiry) * 1000).toLocaleString()
+                  : 'No expiry'}
               </p>
             </div>
             {getStatusBadge(order.account.status)}
@@ -316,8 +270,7 @@ export default function MyRequests() {
             )}
           </div>
         </div>
-        );
-      })}
+      ))}
 
       {showQR && (
         <QRDisplay data={showQR} onClose={() => setShowQR(null)} />

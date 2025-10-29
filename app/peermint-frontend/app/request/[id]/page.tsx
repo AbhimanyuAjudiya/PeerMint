@@ -17,7 +17,7 @@ interface OrderAccount {
   helper: PublicKey | null;
   amount: BN;
   feePercentage: BN | number;
-  expiryTs: BN | number;  // Changed from 'expiry' to 'expiryTs'
+  expiry: BN | number;
   qrString: string;
   status: number;
   nonce: BN;
@@ -54,9 +54,6 @@ export default function RequestDetailPage() {
         
         try {
           const orderAccount = await program.account.order.fetch(orderPubkey);
-          console.log('Order account fetched:', orderAccount);
-          console.log('ExpiryTs value:', orderAccount.expiryTs);
-          console.log('ExpiryTs type:', typeof orderAccount.expiryTs);
           setOrder({ publicKey: orderPubkey, account: orderAccount as unknown as OrderAccount });
         } catch (fetchError) {
           console.error("Error decoding order account:", fetchError);
@@ -205,49 +202,6 @@ export default function RequestDetailPage() {
     }
   };
 
-  const handleAutoRelease = async () => {
-    if (!wallet || !order) return;
-    if (processing) return; // Prevent double-submission
-
-    try {
-      setProcessing(true);
-      const provider = new AnchorProvider(connection, wallet, {
-        commitment: 'confirmed',
-        skipPreflight: false,
-      });
-      const program = getProgram(provider);
-
-      const escrowAta = await getAssociatedTokenAddress(USDC_MINT, order.publicKey, true);
-      const helperAta = await getAssociatedTokenAddress(USDC_MINT, order.account.helper!);
-
-      await program.methods
-        .autoRelease()
-        .accounts({
-          creator: wallet.publicKey,
-          order: order.publicKey,
-          escrowAta,
-          helperAta,
-        })
-        .rpc({
-          skipPreflight: false,
-          commitment: 'confirmed',
-        });
-
-      alert("Funds returned successfully!");
-      fetchOrder();
-    } catch (error) {
-      console.error("Error auto-releasing funds:", error);
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      if (errorMessage.includes("already been processed")) {
-        alert("This action was already submitted. Please refresh the page.");
-      } else {
-        alert("Failed to auto-release funds. Please try again.");
-      }
-    } finally {
-      setProcessing(false);
-    }
-  };
-
   // Status: 0=Pending, 1=HelperJoined, 2=Paid, 3=Released, 4=Disputed
   const getStatusBadge = (status: number) => {
     if (status === 0) {
@@ -333,25 +287,6 @@ export default function RequestDetailPage() {
     : Number(order.account.feePercentage);
   const feeAmount = (amount * feePercentage) / 100;
   const totalDeposited = amount + feeAmount;
-
-  // Check if order is expired (only show as expired if not completed)
-  const isExpired = (() => {
-    try {
-      // Don't show as expired if already completed (status 3)
-      if (order.account.status === 3) return false;
-      
-      let expirySeconds: number;
-      if (typeof order.account.expiryTs === 'object' && 'toNumber' in order.account.expiryTs) {
-        expirySeconds = order.account.expiryTs.toNumber();
-      } else {
-        expirySeconds = Number(order.account.expiryTs);
-      }
-      const currentTime = Math.floor(Date.now() / 1000); // Current time in seconds
-      return currentTime > expirySeconds;
-    } catch {
-      return false;
-    }
-  })();
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -445,32 +380,12 @@ export default function RequestDetailPage() {
             {/* Expiry */}
             <div>
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Expires At</p>
-              <p className={`font-medium ${isExpired ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
-                {(() => {
-                  try {
-                    // Handle BN or number type for expiryTs (Unix timestamp in seconds)
-                    let expirySeconds: number;
-                    if (typeof order.account.expiryTs === 'object' && 'toNumber' in order.account.expiryTs) {
-                      expirySeconds = order.account.expiryTs.toNumber();
-                    } else {
-                      expirySeconds = Number(order.account.expiryTs);
-                    }
-                    
-                    // Convert seconds to milliseconds for JavaScript Date
-                    const expiryDate = new Date(expirySeconds * 1000);
-                    
-                    // Check if valid date
-                    if (isNaN(expiryDate.getTime())) {
-                      return 'Invalid Date';
-                    }
-                    
-                    return expiryDate.toLocaleString();
-                  } catch (error) {
-                    console.error('Error formatting expiry date:', error);
-                    return 'Error displaying date';
-                  }
-                })()}
-                {isExpired && <span className="ml-2 text-xs bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200 px-2 py-1 rounded">EXPIRED</span>}
+              <p className="text-gray-900 dark:text-white">
+                {new Date(
+                  (typeof order.account.expiry === 'object' && 'toNumber' in order.account.expiry
+                    ? order.account.expiry.toNumber()
+                    : Number(order.account.expiry)) * 1000
+                ).toLocaleString()}
               </p>
             </div>
 
@@ -502,34 +417,8 @@ export default function RequestDetailPage() {
             <div className="border-t dark:border-gray-700 pt-6">
               <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Actions</h3>
               
-              {/* Expired - Auto Release (for creator) */}
-              {isExpired && isCreator && order.account.status !== 3 && (
-                <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                  <p className="text-red-800 dark:text-red-200 font-medium mb-3">
-                    ⚠️ This request has expired. You can reclaim your funds.
-                  </p>
-                  <button
-                    onClick={handleAutoRelease}
-                    disabled={processing}
-                    className="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white px-6 py-3 rounded-lg font-medium flex items-center justify-center gap-2"
-                  >
-                    {processing ? (
-                      <>
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        Processing...
-                      </>
-                    ) : (
-                      <>
-                        <ArrowLeft className="w-5 h-5" />
-                        Reclaim Funds
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-              
-              {/* Join Request (for non-creators when pending and not expired) - Status 0 */}
-              {!isCreator && !isHelper && order.account.status === 0 && !isExpired && (
+              {/* Join Request (for non-creators when pending) - Status 0 */}
+              {!isCreator && !isHelper && order.account.status === 0 && (
                 <button
                   onClick={handleJoinRequest}
                   disabled={processing}
