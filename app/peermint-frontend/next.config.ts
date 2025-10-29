@@ -2,13 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
-  webpack: (config) => {
-    config.module.rules.push({
-      test: /\.worker\.js$/,
-      use: { loader: 'worker-loader' },
-    });
-    return config;
-  },
+  // Turbopack is now the default in Next.js 16
+  // The QR scanner worker file is served from the public directory
+  turbopack: {},
 };
 
 export default nextConfig;

@@ -56,7 +56,7 @@ export default function CreateRequest() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await getOrCreateAssociatedTokenAccount(
         connection,
-        wallet as any,
+        wallet as any, // Wallet adapter doesn't match Signer type exactly
         USDC_MINT,
         orderPda,
         true
