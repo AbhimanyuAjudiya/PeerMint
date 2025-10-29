@@ -69,13 +69,12 @@ export default function CreateRequest() {
       return;
     }
 
+    // Set processing flag IMMEDIATELY before any async operations
+    processingRef.current = true;
+    setLoading(true);
+
     try {
-      processingRef.current = true;
-      setLoading(true);
       setSuccess("");
-      
-      // Small delay to ensure ref is set before any potential retry
-      await new Promise(resolve => setTimeout(resolve, 100));
 
       // With the updated program, we can now store up to 500 characters!
       console.log("QR String length:", qrString.length);
@@ -152,10 +151,10 @@ export default function CreateRequest() {
       });
 
       // Get fresh blockhash to ensure transaction uniqueness
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
       console.log("Using blockhash:", blockhash);
 
-      const tx = await program.methods
+      const txBuilder = program.methods
         .createRequest(
           new BN(amountLamports),
           new BN(expiryTs),
@@ -172,17 +171,28 @@ export default function CreateRequest() {
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
-        })
-        .rpc({
-          skipPreflight: false,
-          commitment: 'confirmed',
         });
 
-      console.log("Transaction successful:", tx);
+      // Build and sign transaction manually for better control
+      const tx = await txBuilder.transaction();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = wallet.publicKey;
+
+      const signedTx = await wallet.signTransaction(tx);
+      const rawTx = signedTx.serialize();
+
+      // Send with explicit configuration to prevent duplicates
+      const signature = await connection.sendRawTransaction(rawTx, {
+        skipPreflight: false,
+        maxRetries: 0, // Don't auto-retry - prevents duplicate submissions
+        preflightCommitment: 'confirmed',
+      });
+
+      console.log("Transaction sent:", signature);
       
       // Wait for confirmation
       await connection.confirmTransaction({
-        signature: tx,
+        signature: signature,
         blockhash,
         lastValidBlockHeight,
       }, 'confirmed');
@@ -190,7 +200,7 @@ export default function CreateRequest() {
       // Update last transaction time for cooldown
       lastTransactionTimeRef.current = Date.now();
       
-      setSuccess(`Request created! TX: ${tx.slice(0, 8)}...`);
+      setSuccess(`Request created! TX: ${signature.slice(0, 8)}...`);
       
       // Clear form only after successful transaction
       setAmount("");
@@ -212,6 +222,11 @@ export default function CreateRequest() {
     }
   };
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault(); // Prevent default form submission
+    handleCreate();
+  };
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
       <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
@@ -219,7 +234,7 @@ export default function CreateRequest() {
         Create Payment Request
       </h2>
 
-      <div className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-2">
             Amount (USDC)
@@ -231,6 +246,7 @@ export default function CreateRequest() {
             onChange={(e) => setAmount(e.target.value)}
             className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
             placeholder="10.00"
+            disabled={loading}
           />
         </div>
 
@@ -245,12 +261,14 @@ export default function CreateRequest() {
               className="flex-1 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
               placeholder="upi://pay?pa=yourname@paytm&am=10"
               rows={3}
+              disabled={loading}
             />
             <button
               type="button"
               onClick={() => setShowScanner(true)}
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg flex items-center gap-2 h-fit"
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg flex items-center gap-2 h-fit disabled:opacity-50"
               title="Scan QR Code"
+              disabled={loading}
             >
               <ScanLine className="w-5 h-5" />
               Scan
@@ -275,6 +293,7 @@ export default function CreateRequest() {
               step="0.1"
               min="0"
               max="100"
+              disabled={loading}
             />
             <p className="text-xs text-gray-500 mt-1">
               Percentage fee paid to the helper (e.g., 0.5 = 0.5%)
@@ -291,6 +310,7 @@ export default function CreateRequest() {
               onChange={(e) => setExpiryMinutes(e.target.value)}
               className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
               placeholder="30"
+              disabled={loading}
             />
             <p className="text-xs text-gray-500 mt-1">
               How long before the request expires
@@ -299,7 +319,7 @@ export default function CreateRequest() {
         </div>
 
         <button
-          onClick={handleCreate}
+          type="submit"
           disabled={loading || !wallet.connected || !amount || !qrString}
           className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
@@ -318,7 +338,7 @@ export default function CreateRequest() {
             {success}
           </div>
         )}
-      </div>
+      </form>
 
       {showScanner && (
         <QRScannerComponent
