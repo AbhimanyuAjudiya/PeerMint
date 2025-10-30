@@ -70,3 +70,88 @@ body {
 .animate-fade-in {
   animation: fadeIn 1s ease-out;
 }
+
+/* Wallet Button Custom Styling - Pastel Theme */
+.wallet-adapter-button {
+  background: linear-gradient(135deg, #E8E0FF 0%, #BFFFE0 100%) !important;
+  color: #111111 !important;
+  font-weight: 600 !important;
+  border: none !important;
+  border-radius: 9999px !important;
+  padding: 12px 24px !important;
+  transition: all 0.3s ease !important;
+  box-shadow: 0 2px 8px rgba(191, 255, 224, 0.2) !important;
+  outline: 1px solid #EDEDED !important;
+  outline-offset: 0px !important;
+}
+
+.wallet-adapter-button:hover:not(:disabled) {
+  transform: scale(1.05) !important;
+  box-shadow: 0 8px 24px rgba(140, 255, 200, 0.3) !important;
+}
+
+.wallet-adapter-button:disabled {
+  opacity: 0.6 !important;
+}
+
+.wallet-adapter-button-trigger {
+  background: linear-gradient(135deg, #E8E0FF 0%, #BFFFE0 100%) !important;
+}
+
+/* Wallet Dropdown Styling */
+.wallet-adapter-dropdown {
+  background: #ffffff !important;
+  border: 1px solid #EDEDED !important;
+  border-radius: 9999px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1) !important;
+}
+
+.wallet-adapter-dropdown-list {
+  background: #ffffff !important;
+  border-radius: 16px !important;
+}
+
+.wallet-adapter-dropdown-list-item {
+  color: #111111 !important;
+  padding: 12px 16px !important;
+  transition: background 0.2s ease !important;
+}
+
+.wallet-adapter-dropdown-list-item:hover {
+  background: linear-gradient(135deg, #E8E0FF 0%, #BFFFE0 100%) !important;
+}
+
+/* Wallet Modal Styling */
+.wallet-adapter-modal-wrapper {
+  background: rgba(0, 0, 0, 0.5) !important;
+}
+
+.wallet-adapter-modal {
+  background: #ffffff !important;
+  border: 1px solid #EDEDED !important;
+  border-radius: 9999px !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2) !important;
+}
+
+.wallet-adapter-modal-title {
+  color: #111111 !important;
+  font-weight: 700 !important;
+}
+
+.wallet-adapter-modal-list {
+  background: #ffffff !important;
+}
+
+.wallet-adapter-modal-list-item {
+  background: #ffffff !important;
+  border: 1px solid #EDEDED !important;
+  border-radius: 9999px !important;
+  margin-bottom: 8px !important;
+  transition: all 0.2s ease !important;
+}
+
+.wallet-adapter-modal-list-item:hover {
+  background: linear-gradient(135deg, #E8E0FF 0%, #BFFFE0 100%) !important;
+  transform: scale(1.02) !important;
+  box-shadow: 0 4px 12px rgba(191, 255, 224, 0.3) !important;
+}
