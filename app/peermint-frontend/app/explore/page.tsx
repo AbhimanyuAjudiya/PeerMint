@@ -8,6 +8,7 @@ import { getProgram } from "@/lib/anchor";
 import { PublicKey } from "@solana/web3.js";
 import { AnchorProvider } from "@coral-xyz/anchor";
 import BN from "bn.js";
+import bs58 from "bs58";
 
 interface PaymentRequest {
   id: string;
@@ -32,7 +33,7 @@ interface Order {
     helper: PublicKey | null;
     amount: BN;
     feePercentage: number;
-    expiry: BN | number;
+    expiryTs: BN | number;
     qrString: string;
     status: number;
     nonce: BN;
@@ -46,29 +47,51 @@ export default function ExplorePage() {
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "completed" | "expired">("all");
+  const [sortBy, setSortBy] = useState<"latest" | "expiry">("latest");
 
-  const getStatusFromCode = (statusCode: number): "pending" | "completed" | "expired" => {
-    if (statusCode === 0) return "pending";
-    if (statusCode === 1) return "completed";
-    return "expired";
+  const getStatusFromCode = (statusCode: number, expiryTs: BN | number | undefined): "pending" | "completed" | "expired" => {
+    // Status: 0=Created, 1=Joined, 2=PaidLocal, 3=Released (completed), 4=Disputed, 5=Resolved
+    if (statusCode === 3 || statusCode === 5) return "completed"; // Released or Resolved
+    
+    // Check if expired
+    if (expiryTs) {
+      const expiryTimestamp = typeof expiryTs === 'number' ? expiryTs : expiryTs.toNumber();
+      const now = Math.floor(Date.now() / 1000);
+      if (expiryTimestamp <= now && statusCode < 3) return "expired";
+    }
+    
+    return "pending"; // 0=Created, 1=Joined, 2=PaidLocal, 4=Disputed
   };
 
   const getExpiryInfo = (expiry: BN | number | undefined, status: number): string => {
-    if (status === 1) return "Completed";
-    if (status === 2) return "Expired";
+    // If completed or resolved, show that
+    if (status === 3 || status === 5) return "Completed";
     if (!expiry) return "No expiry";
     
-    const expiryTimestamp = typeof expiry === 'number' ? expiry : expiry.toNumber();
+    let expiryTimestamp = typeof expiry === 'number' ? expiry : expiry.toNumber();
+    
+    // Check if timestamp is in milliseconds (> year 2100 in seconds)
+    if (expiryTimestamp > 4102444800) {
+      expiryTimestamp = Math.floor(expiryTimestamp / 1000);
+    }
+    
     const now = Math.floor(Date.now() / 1000);
     
     if (expiryTimestamp <= now) return "Expired";
     
-    const daysLeft = Math.ceil((expiryTimestamp - now) / 86400);
-    if (daysLeft === 1) return "Expires in 1 day";
-    if (daysLeft > 1) return `Expires in ${daysLeft} days`;
+    const secondsLeft = expiryTimestamp - now;
+    const daysLeft = Math.floor(secondsLeft / 86400);
     
-    const hoursLeft = Math.ceil((expiryTimestamp - now) / 3600);
-    return `Expires in ${hoursLeft} hours`;
+    if (daysLeft > 1) return `${daysLeft} days left`;
+    if (daysLeft === 1) return "1 day left";
+    
+    const hoursLeft = Math.floor(secondsLeft / 3600);
+    if (hoursLeft > 1) return `${hoursLeft} hours left`;
+    if (hoursLeft === 1) return "1 hour left";
+    
+    const minutesLeft = Math.floor(secondsLeft / 60);
+    if (minutesLeft > 1) return `${minutesLeft} minutes left`;
+    return "Less than 1 minute";
   };
 
   const formatAmount = (amount: BN) => {
@@ -96,26 +119,41 @@ export default function ExplorePage() {
       const provider = new AnchorProvider(connection, wallet, {});
       const program = getProgram(provider);
 
-      // Fetch all order accounts with better error handling
+      // Fetch order accounts with optimized filtering
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let allOrders: any[] = [];
       try {
-        // Get all program accounts without filters
-        const accounts = await connection.getProgramAccounts(program.programId);
+        // Get the Order account discriminator (first 8 bytes of account data)
+        const orderDiscriminator = Buffer.from([
+          134, 173, 223, 185, 77, 86, 28, 51
+        ]);
 
-        // Try to deserialize each account individually, skipping failures
-        for (const { pubkey, account } of accounts) {
-          try {
-            const decoded = program.coder.accounts.decode('order', account.data);
-            allOrders.push({
-              publicKey: pubkey,
-              account: decoded,
-            });
-          } catch {
-            // Skip accounts that can't be deserialized (old schema or different account type)
-            // This is expected and won't affect functionality
-          }
-        }
+        // Fetch only Order accounts using memcmp filter for much faster loading
+        const accounts = await connection.getProgramAccounts(program.programId, {
+          filters: [
+            {
+              memcmp: {
+                offset: 0,
+                bytes: bs58.encode(orderDiscriminator), // Use base58 encoding for Solana
+              },
+            },
+          ],
+        });
+
+        // Deserialize accounts in parallel for faster processing
+        allOrders = await Promise.all(
+          accounts.map(async ({ pubkey, account }) => {
+            try {
+              const decoded = program.coder.accounts.decode('order', account.data);
+              return {
+                publicKey: pubkey,
+                account: decoded,
+              };
+            } catch {
+              return null;
+            }
+          })
+        ).then(results => results.filter(r => r !== null));
       } catch (error) {
         console.error("Error fetching program accounts:", error);
         allOrders = [];
@@ -132,8 +170,8 @@ export default function ExplorePage() {
         .map((order: Order) => {
           try {
             const amounts = formatAmount(order.account.amount);
-            const status = getStatusFromCode(order.account.status);
-            const expiryInfo = getExpiryInfo(order.account.expiry, order.account.status);
+            const status = getStatusFromCode(order.account.status, order.account.expiryTs);
+            const expiryInfo = getExpiryInfo(order.account.expiryTs, order.account.status);
 
             return {
               id: order.publicKey.toString(),
@@ -176,16 +214,45 @@ export default function ExplorePage() {
     navigator.clipboard.writeText(text);
   };
 
-  const filteredRequests = requests.filter(request => {
-    const matchesSearch = 
-      request.requestNumber.includes(searchQuery) ||
-      request.status.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesFilter = 
-      filterStatus === "all" || request.status === filterStatus;
-    
-    return matchesSearch && matchesFilter;
-  });
+  const filteredRequests = requests
+    .filter(request => {
+      const matchesSearch = 
+        request.requestNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        request.status.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        request.id.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      const matchesFilter = 
+        filterStatus === "all" || request.status === filterStatus;
+      
+      return matchesSearch && matchesFilter;
+    })
+    .sort((a, b) => {
+      if (sortBy === "latest") {
+        // Sort by request number (nonce) - higher is more recent
+        return parseInt(b.requestNumber) - parseInt(a.requestNumber);
+      } else {
+        // Sort by expiry time - lowest expiry first
+        // Extract seconds from expiry info string or use a large number for completed/no expiry
+        const getExpirySeconds = (req: PaymentRequest): number => {
+          if (req.status === "completed" || req.expiryInfo === "Completed") return Infinity;
+          if (req.expiryInfo === "No expiry") return Infinity;
+          if (req.expiryInfo === "Expired") return 0;
+          
+          // Parse time strings like "5 minutes left", "2 hours left", "3 days left"
+          const match = req.expiryInfo.match(/(\d+)\s+(minute|hour|day)/);
+          if (match) {
+            const value = parseInt(match[1]);
+            const unit = match[2];
+            if (unit === "minute") return value * 60;
+            if (unit === "hour") return value * 3600;
+            if (unit === "day") return value * 86400;
+          }
+          return Infinity;
+        };
+        
+        return getExpirySeconds(a) - getExpirySeconds(b);
+      }
+    });
 
   return (
     <div className="min-h-screen bg-white">
@@ -232,6 +299,18 @@ export default function ExplorePage() {
                 <option value="pending">Pending</option>
                 <option value="completed">Completed</option>
                 <option value="expired">Expired</option>
+              </select>
+            </div>
+
+            <div className="relative">
+              <Clock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#999999] pointer-events-none" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as "latest" | "expiry")}
+                className="pl-12 pr-8 py-3 rounded-full border border-[#EDEDED] focus:outline-none focus:border-[#9FFFCB] transition-colors text-[#111111] bg-[#F8F8F8] appearance-none cursor-pointer min-w-[180px]"
+              >
+                <option value="latest">Latest Request</option>
+                <option value="expiry">Lowest Expiry Time</option>
               </select>
             </div>
           </div>

@@ -11,7 +11,7 @@ import { PublicKey } from "@solana/web3.js";
 import { AnchorProvider } from "@coral-xyz/anchor";
 import BN from "bn.js";
 import QRCode from "qrcode";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 interface PaymentRequest {
   id: string;
@@ -29,6 +29,7 @@ interface PaymentRequest {
   helper: PublicKey | null;
   statusCode: number;
   rawAmount: BN;
+  expiryTs: BN | number;
 }
 
 interface Order {
@@ -38,7 +39,7 @@ interface Order {
     helper: PublicKey | null;
     amount: BN;
     feePercentage: number;
-    expiry: BN | number;
+    expiryTs: BN | number;
     qrString: string;
     status: number;
     nonce: BN;
@@ -56,28 +57,74 @@ export default function RequestDetailPage() {
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
   const [processing, setProcessing] = useState(false);
 
-  const getStatusFromCode = (statusCode: number): "pending" | "completed" | "expired" => {
-    if (statusCode === 0) return "pending";
-    if (statusCode === 1) return "completed";
-    return "expired";
+  const getStatusFromCode = (statusCode: number, expiryTs: BN | number | undefined): "pending" | "completed" | "expired" => {
+    // Status: 0=Created, 1=Joined, 2=PaidLocal, 3=Released (completed), 4=Disputed, 5=Resolved
+    if (statusCode === 3 || statusCode === 5) return "completed"; // Released or Resolved
+    
+    // Check if expired
+    if (expiryTs) {
+      const expiryTimestamp = typeof expiryTs === 'number' ? expiryTs : expiryTs.toNumber();
+      const now = Math.floor(Date.now() / 1000);
+      if (expiryTimestamp <= now && statusCode < 3) return "expired";
+    }
+    
+    return "pending"; // 0=Created, 1=Joined, 2=PaidLocal, 4=Disputed
   };
 
   const getExpiryInfo = (expiry: BN | number | undefined, status: number): string => {
-    if (status === 1) return "Completed";
-    if (status === 2) return "Expired";
+    // If completed or resolved, show that
+    if (status === 3 || status === 5) return "Completed";
     if (!expiry) return "No expiry";
     
-    const expiryTimestamp = typeof expiry === 'number' ? expiry : expiry.toNumber();
+    let expiryTimestamp = typeof expiry === 'number' ? expiry : expiry.toNumber();
+    
+    // Check if timestamp is in milliseconds (13 digits or > 10 billion)
+    // Current time in milliseconds is around 1730000000000 (13 digits)
+    // Current time in seconds is around 1730000000 (10 digits)
+    if (expiryTimestamp > 10000000000) {
+      expiryTimestamp = Math.floor(expiryTimestamp / 1000);
+    }
     const now = Math.floor(Date.now() / 1000);
     
     if (expiryTimestamp <= now) return "Expired";
     
-    const daysLeft = Math.ceil((expiryTimestamp - now) / 86400);
-    if (daysLeft === 1) return "Expires in 1 day";
-    if (daysLeft > 1) return `Expires in ${daysLeft} days`;
+    const secondsLeft = expiryTimestamp - now;
+    const daysLeft = Math.floor(secondsLeft / 86400);
     
-    const hoursLeft = Math.ceil((expiryTimestamp - now) / 3600);
-    return `Expires in ${hoursLeft} hours`;
+    if (daysLeft > 1) return `${daysLeft} days left`;
+    if (daysLeft === 1) return "1 day left";
+    
+    const hoursLeft = Math.floor(secondsLeft / 3600);
+    if (hoursLeft > 1) return `${hoursLeft} hours left`;
+    if (hoursLeft === 1) return "1 hour left";
+    
+    const minutesLeft = Math.floor(secondsLeft / 60);
+    if (minutesLeft > 1) return `${minutesLeft} minutes left`;
+    return "Less than 1 minute";
+  };
+
+  const getExactExpiryDate = (expiry: BN | number | undefined): string => {
+    if (!expiry) return "No expiry set";
+    
+    let expiryTimestamp = typeof expiry === 'number' ? expiry : expiry.toNumber();
+    
+    // Check if timestamp is in milliseconds (13 digits or > 10 billion)
+    // Current time in milliseconds is around 1730000000000 (13 digits)
+    // Current time in seconds is around 1730000000 (10 digits)
+    if (expiryTimestamp > 10000000000) {
+      // It's in milliseconds, convert to seconds
+      expiryTimestamp = Math.floor(expiryTimestamp / 1000);
+    }
+    
+    const date = new Date(expiryTimestamp * 1000);
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
   };
 
   const formatAmount = (amount: BN) => {
@@ -101,29 +148,28 @@ export default function RequestDetailPage() {
         const provider = new AnchorProvider(connection, wallet, {});
         const program = getProgram(provider);
 
-        // Fetch all program accounts with better error handling
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const allOrders: any[] = [];
+        // Fetch the specific order account directly - much faster than fetching all accounts
+        let order: Order | null = null;
         try {
-          const accounts = await connection.getProgramAccounts(program.programId);
-
-          // Try to deserialize each account individually, skipping failures
-          for (const { pubkey, account } of accounts) {
-            try {
-              const decoded = program.coder.accounts.decode('order', account.data);
-              allOrders.push({
-                publicKey: pubkey,
-                account: decoded,
-              });
-            } catch {
-              // Skip accounts that can't be deserialized (old schema or different account type)
-            }
+          const orderPubkey = new PublicKey(requestId);
+          const accountInfo = await connection.getAccountInfo(orderPubkey);
+          
+          if (!accountInfo) {
+            console.error("Order account not found");
+            setLoading(false);
+            return;
           }
-        } catch (err) {
-          console.error("Error fetching program accounts:", err);
-        }
 
-        const order = allOrders.find((o: Order) => o.publicKey.toString() === requestId);
+          const decoded = program.coder.accounts.decode('order', accountInfo.data);
+          order = {
+            publicKey: orderPubkey,
+            account: decoded,
+          };
+        } catch (err) {
+          console.error("Error fetching order account:", err);
+          setLoading(false);
+          return;
+        }
 
         if (!order) {
           setLoading(false);
@@ -131,8 +177,8 @@ export default function RequestDetailPage() {
         }
 
         const amounts = formatAmount(order.account.amount);
-        const status = getStatusFromCode(order.account.status);
-        const expiryInfo = getExpiryInfo(order.account.expiry, order.account.status);
+        const status = getStatusFromCode(order.account.status, order.account.expiryTs);
+        const expiryInfo = getExpiryInfo(order.account.expiryTs, order.account.status);
 
         const transformedRequest: PaymentRequest = {
           id: order.publicKey.toString(),
@@ -150,6 +196,7 @@ export default function RequestDetailPage() {
           helper: order.account.helper || null,
           statusCode: order.account.status,
           rawAmount: order.account.amount,
+          expiryTs: order.account.expiryTs,
         };
 
         setRequest(transformedRequest);
@@ -248,20 +295,12 @@ export default function RequestDetailPage() {
       const provider = new AnchorProvider(connection, wallet, {});
       const program = getProgram(provider);
 
-      // Get the escrow ATA
-      const [orderPda] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("order"),
-          request.creator.toBuffer(),
-          new BN(request.requestNumber).toArrayLike(Buffer, "le", 8),
-        ],
-        program.programId
-      );
-
+      // The order PDA is request.publicKey
+      // Get the escrow ATA (owned by the order PDA)
       const escrowAta = getAssociatedTokenAddressSync(
         USDC_MINT,
-        orderPda,
-        true
+        request.publicKey,
+        true // allowOwnerOffCurve = true for PDA
       );
 
       // Get helper's ATA
@@ -271,6 +310,18 @@ export default function RequestDetailPage() {
         false
       );
 
+      // Debug: Check escrow balance
+      console.log("🔍 Order PDA:", request.publicKey.toString());
+      console.log("🔍 Escrow ATA:", escrowAta.toString());
+      console.log("🔍 Helper ATA:", helperAta.toString());
+      
+      try {
+        const escrowBalance = await connection.getTokenAccountBalance(escrowAta);
+        console.log("🔍 Escrow balance:", escrowBalance.value.uiAmount, "USDC");
+      } catch (e) {
+        console.error("❌ Escrow account doesn't exist or error fetching balance:", e);
+      }
+
       await program.methods
         .acknowledgeAndRelease()
         .accounts({
@@ -278,8 +329,9 @@ export default function RequestDetailPage() {
           order: request.publicKey,
           escrowAta: escrowAta,
           helperAta: helperAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
         })
-        .rpc();
+        .rpc({ maxRetries: 0 });
 
       alert("Successfully released funds!");
       // Refresh request data
@@ -408,7 +460,7 @@ export default function RequestDetailPage() {
                   <div className="text-2xl font-bold text-[#111111]">{request.helperFee}</div>
                 </div>
                 <div className="p-6 rounded-2xl bg-[#F8F8F8] border border-[#EDEDED]">
-                  <div className="text-xs text-[#666666] mb-2 font-medium">Expiry</div>
+                  <div className="text-xs text-[#666666] mb-2 font-medium">Status</div>
                   <div className="text-lg font-bold text-[#111111]">{request.expiryInfo}</div>
                 </div>
               </div>
@@ -416,6 +468,10 @@ export default function RequestDetailPage() {
               {/* Additional Info */}
               <div className="p-6 rounded-2xl bg-gradient-to-br from-[#E8E0FF]/20 to-[#FFF2E5]/20 border border-[#EDEDED]">
                 <div className="space-y-4">
+                  <div>
+                    <div className="text-xs text-[#666666] mb-1 font-medium">Expires On</div>
+                    <div className="text-sm text-[#111111] font-semibold">{getExactExpiryDate(request.expiryTs)}</div>
+                  </div>
                   <div>
                     <div className="text-xs text-[#666666] mb-1 font-medium">Request ID</div>
                     <div className="text-sm text-[#111111] font-mono break-all">{request.id.slice(0, 16)}...</div>

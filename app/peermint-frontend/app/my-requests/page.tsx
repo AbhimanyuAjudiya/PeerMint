@@ -8,6 +8,7 @@ import { getProgram } from "@/lib/anchor";
 import { PublicKey } from "@solana/web3.js";
 import { AnchorProvider } from "@coral-xyz/anchor";
 import BN from "bn.js";
+import bs58 from "bs58";
 
 interface PaymentRequest {
   id: string;
@@ -30,7 +31,7 @@ interface Order {
     helper: PublicKey | null;
     amount: BN;
     feePercentage: number;
-    expiry: BN | number;
+    expiryTs: BN | number;
     qrString: string;
     status: number;
     nonce: BN;
@@ -44,30 +45,51 @@ export default function MyRequestsPage() {
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "completed" | "expired">("all");
+  const [sortBy, setSortBy] = useState<"latest" | "expiry">("latest");
 
-  const getStatusFromCode = (statusCode: number): "pending" | "completed" | "expired" => {
-    if (statusCode === 0) return "pending";
-    if (statusCode === 1) return "completed";
-    return "expired";
+  const getStatusFromCode = (statusCode: number, expiryTs: BN | number | undefined): "pending" | "completed" | "expired" => {
+    // Status: 0=Created, 1=Joined, 2=PaidLocal, 3=Released (completed), 4=Disputed, 5=Resolved
+    if (statusCode === 3 || statusCode === 5) return "completed"; // Released or Resolved
+    
+    // Check if expired
+    if (expiryTs) {
+      const expiryTimestamp = typeof expiryTs === 'number' ? expiryTs : expiryTs.toNumber();
+      const now = Math.floor(Date.now() / 1000);
+      if (expiryTimestamp <= now && statusCode < 3) return "expired";
+    }
+    
+    return "pending"; // 0=Created, 1=Joined, 2=PaidLocal, 4=Disputed
   };
 
   const getExpiryInfo = (expiry: BN | number | undefined, status: number): string => {
-    if (status === 1) return "Completed";
-    if (status === 2) return "Expired";
+    // If completed or resolved, show that
+    if (status === 3 || status === 5) return "Completed";
     if (!expiry) return "No expiry";
     
-    const expiryTimestamp = typeof expiry === 'number' ? expiry : expiry.toNumber();
+    let expiryTimestamp = typeof expiry === 'number' ? expiry : expiry.toNumber();
+    
+    // Check if timestamp is in milliseconds (> year 2100 in seconds)
+    if (expiryTimestamp > 4102444800) {
+      expiryTimestamp = Math.floor(expiryTimestamp / 1000);
+    }
+    
     const now = Math.floor(Date.now() / 1000);
     
     if (expiryTimestamp <= now) return "Expired";
     
-    const daysLeft = Math.ceil((expiryTimestamp - now) / 86400);
-    if (daysLeft === 1) return "Expires in 1 day";
-    if (daysLeft > 1) return `Expires in ${daysLeft} days`;
+    const secondsLeft = expiryTimestamp - now;
+    const daysLeft = Math.floor(secondsLeft / 86400);
     
-    const hoursLeft = Math.ceil((expiryTimestamp - now) / 3600);
-    if (hoursLeft === 1) return "Expires in 1 hour";
-    return `Expires in ${hoursLeft} hours`;
+    if (daysLeft > 1) return `${daysLeft} days left`;
+    if (daysLeft === 1) return "1 day left";
+    
+    const hoursLeft = Math.floor(secondsLeft / 3600);
+    if (hoursLeft > 1) return `${hoursLeft} hours left`;
+    if (hoursLeft === 1) return "1 hour left";
+    
+    const minutesLeft = Math.floor(secondsLeft / 60);
+    if (minutesLeft > 1) return `${minutesLeft} minutes left`;
+    return "Less than 1 minute";
   };
 
   const formatAmount = (amount: BN): { usdc: string; inr: string } => {
@@ -93,45 +115,57 @@ export default function MyRequestsPage() {
       const provider = new AnchorProvider(connection, wallet, {});
       const program = getProgram(provider);
       
-      // Fetch all order accounts with better error handling
+      // Fetch order accounts with optimized filtering
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let allOrders: any[] = [];
+      let myOrdersList: any[] = [];
       try {
-        // Get all program accounts without filters
-        const accounts = await connection.getProgramAccounts(program.programId);
+        // Get the Order account discriminator (first 8 bytes)
+        const orderDiscriminator = Buffer.from([
+          134, 173, 223, 185, 77, 86, 28, 51
+        ]);
 
-        // Try to deserialize each account individually, skipping failures
-        for (const { pubkey, account } of accounts) {
-          try {
-            const decoded = program.coder.accounts.decode('order', account.data);
-            allOrders.push({
-              publicKey: pubkey,
-              account: decoded,
-            });
-          } catch {
-            // Skip accounts that can't be deserialized (old schema or different account type)
-            // This is expected and won't affect functionality
-          }
-        }
+        // Creator public key is at offset 8 (after discriminator)
+        // Fetch only Order accounts created by current wallet for much faster loading
+        const accounts = await connection.getProgramAccounts(program.programId, {
+          filters: [
+            {
+              memcmp: {
+                offset: 0,
+                bytes: bs58.encode(orderDiscriminator), // Use base58 encoding
+              },
+            },
+            {
+              memcmp: {
+                offset: 8, // After discriminator (8 bytes)
+                bytes: wallet.publicKey.toBase58(),
+              },
+            },
+          ],
+        });
+
+        // Deserialize accounts in parallel for faster processing
+        myOrdersList = await Promise.all(
+          accounts.map(async ({ pubkey, account }) => {
+            try {
+              const decoded = program.coder.accounts.decode('order', account.data);
+              return {
+                publicKey: pubkey,
+                account: decoded,
+              };
+            } catch {
+              return null;
+            }
+          })
+        ).then(results => results.filter(r => r !== null));
       } catch (error) {
         console.error("Error fetching program accounts:", error);
-        allOrders = [];
+        myOrdersList = [];
       }
-
-      // Filter orders created by the current wallet
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const myOrdersList = allOrders.filter((order: any) => {
-        try {
-          return order.account.creator.toString() === wallet.publicKey.toString();
-        } catch {
-          return false;
-        }
-      }) as Order[];
 
       // Transform to PaymentRequest format
       const transformedRequests: PaymentRequest[] = myOrdersList.map((order) => {
         const amounts = formatAmount(order.account.amount);
-        const status = getStatusFromCode(order.account.status);
+        const status = getStatusFromCode(order.account.status, order.account.expiryTs);
         
         return {
           id: order.publicKey.toString(),
@@ -143,7 +177,7 @@ export default function MyRequestsPage() {
           status,
           qrString: order.account.qrString,
           createdAt: new Date().toISOString().split('T')[0], // We don't store creation time on-chain
-          expiryInfo: getExpiryInfo(order.account.expiry, order.account.status),
+          expiryInfo: getExpiryInfo(order.account.expiryTs, order.account.status),
           publicKey: order.publicKey
         };
       });
@@ -182,12 +216,39 @@ export default function MyRequestsPage() {
     // Optional: Show a toast notification
   };
 
-  const filteredRequests = requests.filter(req => {
-    const matchesSearch = req.requestNumber.includes(searchQuery) || 
-                         req.status.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFilter = filterStatus === "all" || req.status === filterStatus;
-    return matchesSearch && matchesFilter;
-  });
+  const filteredRequests = requests
+    .filter(req => {
+      const matchesSearch = req.requestNumber.includes(searchQuery) || 
+                           req.status.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesFilter = filterStatus === "all" || req.status === filterStatus;
+      return matchesSearch && matchesFilter;
+    })
+    .sort((a, b) => {
+      if (sortBy === "latest") {
+        // Sort by request number (nonce) - higher is more recent
+        return parseInt(b.requestNumber) - parseInt(a.requestNumber);
+      } else {
+        // Sort by expiry time - lowest expiry first
+        const getExpirySeconds = (req: PaymentRequest): number => {
+          if (req.status === "completed" || req.expiryInfo === "Completed") return Infinity;
+          if (req.expiryInfo === "No expiry") return Infinity;
+          if (req.expiryInfo === "Expired") return 0;
+          
+          // Parse time strings like "5 minutes left", "2 hours left", "3 days left"
+          const match = req.expiryInfo.match(/(\d+)\s+(minute|hour|day)/);
+          if (match) {
+            const value = parseInt(match[1]);
+            const unit = match[2];
+            if (unit === "minute") return value * 60;
+            if (unit === "hour") return value * 3600;
+            if (unit === "day") return value * 86400;
+          }
+          return Infinity;
+        };
+        
+        return getExpirySeconds(a) - getExpirySeconds(b);
+      }
+    });
 
   return (
     <div className="min-h-screen bg-white relative overflow-hidden">
@@ -252,6 +313,19 @@ export default function MyRequestsPage() {
               </select>
               <Filter className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#999999] pointer-events-none" />
             </div>
+
+            {/* Sort Dropdown */}
+            <div className="relative">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as "latest" | "expiry")}
+                className="appearance-none px-6 py-3 pr-10 rounded-xl border border-[#EDEDED] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.04)] focus:outline-none focus:ring-2 focus:ring-[#9FFFCB] focus:border-transparent transition-all text-[#111111] cursor-pointer font-medium"
+              >
+                <option value="latest">Latest Request</option>
+                <option value="expiry">Lowest Expiry Time</option>
+              </select>
+              <Clock className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#999999] pointer-events-none" />
+            </div>
           </div>
         </div>
 
@@ -315,14 +389,14 @@ export default function MyRequestsPage() {
                 </div>
               </div>
 
-              {/* Middle Section - 2 Column Data */}
-              <div className="relative grid grid-cols-2 gap-4 mb-5">
+              {/* Middle Section - 3 Column Data */}
+              <div className="relative grid grid-cols-3 gap-3 mb-5">
                 {/* Helper Pays (INR/USDC) */}
-                <div className="p-4 rounded-2xl bg-gradient-to-br from-[#BFFFE0]/20 to-[#E1F0FF]/20 border border-[#EDEDED]">
+                <div className="p-3 rounded-2xl bg-gradient-to-br from-[#BFFFE0]/20 to-[#E1F0FF]/20 border border-[#EDEDED]">
                   <div className="text-xs text-[#666666] mb-1.5 font-medium">
                     Amount
                   </div>
-                  <div className="text-base font-bold text-[#111111] mb-0.5">
+                  <div className="text-sm font-bold text-[#111111] mb-0.5">
                     ₹{request.inrAmount}
                   </div>
                   <div className="text-xs text-[#999999]">
@@ -331,15 +405,28 @@ export default function MyRequestsPage() {
                 </div>
 
                 {/* Helper Fee */}
-                <div className="p-4 rounded-2xl bg-gradient-to-br from-[#E8E0FF]/20 to-[#FFF2E5]/20 border border-[#EDEDED]">
+                <div className="p-3 rounded-2xl bg-gradient-to-br from-[#E8E0FF]/20 to-[#FFF2E5]/20 border border-[#EDEDED]">
                   <div className="text-xs text-[#666666] mb-1.5 font-medium">
-                    Helper Fee
+                    Fee
                   </div>
-                  <div className="text-base font-bold text-[#111111] mb-0.5">
+                  <div className="text-sm font-bold text-[#111111] mb-0.5">
                     {request.helperFee}
                   </div>
                   <div className="text-xs text-[#999999]">
                     Commission
+                  </div>
+                </div>
+
+                {/* Expiry */}
+                <div className="p-3 rounded-2xl bg-gradient-to-br from-[#E1F0FF]/20 to-[#BFFFE0]/20 border border-[#EDEDED]">
+                  <div className="text-xs text-[#666666] mb-1.5 font-medium">
+                    Expiry
+                  </div>
+                  <div className="text-sm font-bold text-[#111111] mb-0.5">
+                    {request.expiryInfo}
+                  </div>
+                  <div className="text-xs text-[#999999]">
+                    Time left
                   </div>
                 </div>
               </div>
