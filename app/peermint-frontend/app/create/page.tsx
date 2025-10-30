@@ -41,21 +41,21 @@ export default function CreateRequestPage() {
   // Form state
   const [inrAmount, setInrAmount] = useState("");
   const [qrString, setQrString] = useState("");
-  const [feePercentage, setFeePercentage] = useState("0.5");
   const [expiryMinutes, setExpiryMinutes] = useState("30");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
   const [showScanner, setShowScanner] = useState(false);
   
-  // Exchange rate: 1 USDC = 83.09 INR
-  const USDC_TO_INR_RATE = 83.09;
+  // Fixed constants
+  const USDC_TO_INR_RATE = 83.09; // Exchange rate: 1 USDC = 83.09 INR
+  const FIXED_FEE_PERCENTAGE = 1; // Fixed 1% helper fee
   
   // Calculate USDC amount from INR
   const usdcAmount = inrAmount ? (parseFloat(inrAmount) / USDC_TO_INR_RATE).toFixed(6) : "0";
   
   // Calculate helper fee in INR
-  const helperFeeINR = inrAmount && feePercentage 
-    ? (parseFloat(inrAmount) * (parseFloat(feePercentage) / 100)).toFixed(2) 
+  const helperFeeINR = inrAmount 
+    ? (parseFloat(inrAmount) * (FIXED_FEE_PERCENTAGE / 100)).toFixed(2) 
     : "0";
 
   // Transaction management refs
@@ -146,9 +146,8 @@ export default function CreateRequestPage() {
       const usdcAmountValue = parseFloat(inrAmount) / USDC_TO_INR_RATE;
       const amountLamports = Math.floor(usdcAmountValue * 1_000_000);
       const inrAmountPaise = Math.floor(parseFloat(inrAmount) * 100);
-      // Fee percentage - user enters directly (e.g., 0.5 for 0.5%)
-      // Rust expects percentage (0-100), where it divides by 100 to get decimal
-      const feePercentageValue = parseFloat(feePercentage);
+      // Fixed 1% fee
+      const feePercentageValue = FIXED_FEE_PERCENTAGE;
       const expiryTs = Math.floor(Date.now() / 1000) + parseInt(expiryMinutes) * 60;
       const nonce = generateUniqueNonce();
 
@@ -239,7 +238,6 @@ export default function CreateRequestPage() {
       // Reset form
       setInrAmount("");
       setQrString("");
-      setFeePercentage("0.5");
       setExpiryMinutes("30");
 
       // Redirect after 2 seconds
@@ -351,42 +349,33 @@ export default function CreateRequestPage() {
                 )}
               </div>
 
-              {/* Helper Fee */}
+              {/* Helper Fee - Display Only */}
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-                  Helper Fee (%)
+                  Helper Fee
                   <div className="group relative">
                     <Info className="w-4 h-4 text-gray-400 cursor-help" />
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded-lg">
-                      Fee percentage paid to helper for providing INR liquidity (e.g., 0.5 = 0.5%)
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded-lg z-10">
+                      Fixed fee paid to helper for providing INR liquidity
                     </div>
                   </div>
                 </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="100"
-                    value={feePercentage}
-                    onChange={(e) => setFeePercentage(e.target.value)}
-                    placeholder="0.5"
-                    className="w-full px-4 py-4 bg-gradient-to-br from-gray-50 to-white border-2 border-gray-200 rounded-2xl focus:border-[#E9D8FD] focus:ring-4 focus:ring-[#E9D8FD]/20 transition-all outline-none text-lg font-semibold text-gray-900"
-                  />
-                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400">
-                    %
+                <div className="w-full px-4 py-4 bg-gradient-to-br from-purple-50 to-violet-50 border-2 border-purple-200 rounded-2xl flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="px-3 py-1 bg-purple-500 text-white text-sm font-bold rounded-lg">
+                      {FIXED_FEE_PERCENTAGE}%
+                    </div>
+                    <span className="text-gray-700 font-semibold">Fixed Helper Fee</span>
                   </div>
+                  {inrAmount && (
+                    <span className="text-purple-600 font-bold">₹{helperFeeINR}</span>
+                  )}
                 </div>
-                {inrAmount && feePercentage && (
-                  <p className="text-sm text-gray-600 mt-2">
-                    Fee: <span className="font-semibold text-purple-600">₹{helperFeeINR}</span>
-                  </p>
-                )}
               </div>
             </div>
 
             {/* Total Amount Locked - Prominent Display */}
-            {inrAmount && feePercentage && (
+            {inrAmount && (
               <div className="mb-6 p-6 bg-gradient-to-br from-[#8FFF73]/10 to-[#10b981]/5 border-2 border-[#8FFF73]/30 rounded-2xl">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -403,7 +392,7 @@ export default function CreateRequestPage() {
                       ₹{(parseFloat(inrAmount) + parseFloat(helperFeeINR)).toFixed(2)}
                     </p>
                     <p className="text-sm text-gray-600">
-                      {((parseFloat(usdcAmount) * (1 + parseFloat(feePercentage) / 100)).toFixed(6))} USDC
+                      {((parseFloat(usdcAmount) * (1 + FIXED_FEE_PERCENTAGE / 100)).toFixed(6))} USDC
                     </p>
                   </div>
                 </div>
