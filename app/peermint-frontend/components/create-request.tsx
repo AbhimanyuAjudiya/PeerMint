@@ -328,7 +328,7 @@ export default function CreateRequest() {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-2">
-            Amount (INR) 🇮🇳
+            Request Amount (INR) 🇮🇳
           </label>
           <input
             type="number"
@@ -340,9 +340,28 @@ export default function CreateRequest() {
             disabled={loading}
           />
           {inrAmount && (
-            <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
-              ≈ {usdcAmount} USDC will be locked (@ ₹{USDC_TO_INR_RATE}/USDC)
-            </p>
+            <div className="text-sm mt-2 space-y-1">
+              <p className="text-gray-600 dark:text-gray-400">
+                ≈ {usdcAmount} USDC (@ ₹{USDC_TO_INR_RATE}/USDC)
+              </p>
+              {(() => {
+                const baseINR = parseFloat(inrAmount);
+                const feePercent = parseFloat(feeBps) / 10;
+                const totalINR = (baseINR * (1 + feePercent / 100)).toFixed(2);
+                const baseUSDC = parseFloat(usdcAmount);
+                const totalUSDC = (baseUSDC * (1 + feePercent / 100)).toFixed(6);
+                return (
+                  <>
+                    <p className="text-blue-600 dark:text-blue-400 font-semibold">
+                      💰 Total Amount Locked: ₹{totalINR} ({totalUSDC} USDC)
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Includes {feePercent}% helper fee
+                    </p>
+                  </>
+                );
+              })()}
+            </div>
           )}
         </div>
 

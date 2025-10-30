@@ -346,7 +346,7 @@ export default function CreateRequestPage() {
                 </div>
                 {inrAmount && (
                   <p className="text-sm text-gray-600 mt-2">
-                    ≈ <span className="font-semibold text-[#10b981]">{usdcAmount} USDC</span> will be locked
+                    ≈ <span className="font-semibold text-[#10b981]">{usdcAmount} USDC</span>
                   </p>
                 )}
               </div>
@@ -379,11 +379,38 @@ export default function CreateRequestPage() {
                 </div>
                 {inrAmount && feePercentage && (
                   <p className="text-sm text-gray-600 mt-2">
-                    Fee: <span className="font-semibold text-purple-600">₹{helperFeeINR}</span> ({parseFloat(feePercentage).toFixed(2)}%)
+                    Fee: <span className="font-semibold text-purple-600">₹{helperFeeINR}</span>
                   </p>
                 )}
               </div>
+            </div>
 
+            {/* Total Amount Locked - Prominent Display */}
+            {inrAmount && feePercentage && (
+              <div className="mb-6 p-6 bg-gradient-to-br from-[#8FFF73]/10 to-[#10b981]/5 border-2 border-[#8FFF73]/30 rounded-2xl">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-gradient-to-br from-[#8FFF73] to-[#10b981] rounded-xl flex items-center justify-center">
+                      <Shield className="w-6 h-6 text-[#0D0D0D]" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-600">Total Amount to be Locked</p>
+                      <p className="text-xs text-gray-500">Requested amount + Helper fee</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-bold text-[#10b981]">
+                      ₹{(parseFloat(inrAmount) + parseFloat(helperFeeINR)).toFixed(2)}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      {((parseFloat(usdcAmount) * (1 + parseFloat(feePercentage) / 100)).toFixed(6))} USDC
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="grid md:grid-cols-2 gap-6 mb-8">
               {/* Expiry */}
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">

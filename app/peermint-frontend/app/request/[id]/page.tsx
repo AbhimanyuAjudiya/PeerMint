@@ -38,6 +38,7 @@ interface Order {
     creator: PublicKey;
     helper: PublicKey | null;
     amount: BN;
+    inrAmount: BN;
     feePercentage: number;
     expiryTs: BN | number;
     qrString: string;
@@ -127,15 +128,6 @@ export default function RequestDetailPage() {
     });
   };
 
-  const formatAmount = (amount: BN) => {
-    const usdcAmount = amount.toNumber() / 1_000_000;
-    const inrAmount = Math.round(usdcAmount * 84);
-    return {
-      usdc: usdcAmount.toFixed(2),
-      inr: inrAmount.toLocaleString('en-IN'),
-    };
-  };
-
   useEffect(() => {
     const fetchRequest = async () => {
       if (!wallet || !requestId) {
@@ -176,16 +168,19 @@ export default function RequestDetailPage() {
           return;
         }
 
-        const amounts = formatAmount(order.account.amount);
+        // Use stored amounts directly from blockchain
+        const usdcAmount = order.account.amount.toNumber() / 1_000_000;
+        const inrAmount = order.account.inrAmount.toNumber() / 100; // Convert paise to rupees
+        
         const status = getStatusFromCode(order.account.status, order.account.expiryTs);
         const expiryInfo = getExpiryInfo(order.account.expiryTs, order.account.status);
 
         const transformedRequest: PaymentRequest = {
           id: order.publicKey.toString(),
           requestNumber: order.account.nonce.toString().padStart(6, '0'),
-          amount: amounts.usdc,
+          amount: usdcAmount.toFixed(6),
           currency: 'USDC',
-          inrAmount: amounts.inr,
+          inrAmount: inrAmount.toFixed(2),
           helperFee: `${order.account.feePercentage}%`,
           status,
           qrString: order.account.qrString,
@@ -247,14 +242,18 @@ export default function RequestDetailPage() {
           helper: wallet.publicKey,
           order: request.publicKey,
         })
-        .rpc();
+        .rpc({ maxRetries: 0 });
 
-      alert("Successfully joined the request!");
-      // Refresh request data
+      // Refresh request data to show updated state
       window.location.reload();
     } catch (error) {
+      // If transaction succeeds but RPC returns "already processed", still reload
+      if (error instanceof Error && error.message.includes('already been processed')) {
+        window.location.reload();
+        return; // Exit early to avoid logging the error
+      }
+      // Only log actual errors
       console.error("Error joining request:", error);
-      alert("Failed to join request. Please try again.");
     } finally {
       setProcessing(false);
     }
@@ -274,14 +273,18 @@ export default function RequestDetailPage() {
           helper: wallet.publicKey,
           order: request.publicKey,
         })
-        .rpc();
+        .rpc({ maxRetries: 0 });
 
-      alert("Successfully marked as paid!");
-      // Refresh request data
+      // Refresh request data to show updated state
       window.location.reload();
     } catch (error) {
+      // If transaction succeeds but RPC returns "already processed", still reload
+      if (error instanceof Error && error.message.includes('already been processed')) {
+        window.location.reload();
+        return; // Exit early to avoid logging the error
+      }
+      // Only log actual errors
       console.error("Error marking as paid:", error);
-      alert("Failed to mark as paid. Please try again.");
     } finally {
       setProcessing(false);
     }
@@ -310,18 +313,6 @@ export default function RequestDetailPage() {
         false
       );
 
-      // Debug: Check escrow balance
-      console.log("🔍 Order PDA:", request.publicKey.toString());
-      console.log("🔍 Escrow ATA:", escrowAta.toString());
-      console.log("🔍 Helper ATA:", helperAta.toString());
-      
-      try {
-        const escrowBalance = await connection.getTokenAccountBalance(escrowAta);
-        console.log("🔍 Escrow balance:", escrowBalance.value.uiAmount, "USDC");
-      } catch (e) {
-        console.error("❌ Escrow account doesn't exist or error fetching balance:", e);
-      }
-
       await program.methods
         .acknowledgeAndRelease()
         .accounts({
@@ -333,12 +324,16 @@ export default function RequestDetailPage() {
         })
         .rpc({ maxRetries: 0 });
 
-      alert("Successfully released funds!");
-      // Refresh request data
+      // Refresh request data to show updated state
       window.location.reload();
     } catch (error) {
+      // If transaction succeeds but RPC returns "already processed", still reload
+      if (error instanceof Error && error.message.includes('already been processed')) {
+        window.location.reload();
+        return; // Exit early to avoid logging the error
+      }
+      // Only log actual errors
       console.error("Error releasing funds:", error);
-      alert("Failed to release funds. Please try again.");
     } finally {
       setProcessing(false);
     }
@@ -449,15 +444,65 @@ export default function RequestDetailPage() {
               {/* Amount Card */}
               <div className="p-8 rounded-3xl bg-gradient-to-br from-[#BFFFE0]/20 to-[#E1F0FF]/20 border border-[#EDEDED] shadow-sm">
                 <div className="text-sm text-[#666666] mb-2 font-medium">Requested Amount</div>
-                <div className="text-4xl font-bold text-[#111111] mb-2">₹{request.inrAmount}</div>
-                <div className="text-lg text-[#999999]">{request.amount} {request.currency}</div>
+                <div className="text-4xl font-bold text-[#111111] mb-2">
+                  ₹{request.inrAmount}
+                </div>
+                <div className="text-lg text-[#999999]">
+                  {request.amount} {request.currency}
+                </div>
+                
+                {/* Total Amount with Fee */}
+                <div className="mt-4 pt-4 border-t border-[#EDEDED]">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-[#666666]">Helper Fee ({request.helperFee})</span>
+                    <div className="text-right">
+                      <div className="text-[#111111] font-semibold">
+                        {(() => {
+                          const baseINR = parseFloat(request.inrAmount);
+                          const feePercent = parseFloat(request.helperFee);
+                          const feeINR = Math.round(baseINR * feePercent / 100);
+                          return `₹${feeINR}`;
+                        })()}
+                      </div>
+                      <div className="text-xs text-[#999999] mt-0.5">
+                        {(() => {
+                          const baseUSDC = parseFloat(request.amount);
+                          const feePercent = parseFloat(request.helperFee);
+                          const feeUSDC = baseUSDC * feePercent / 100;
+                          return `${feeUSDC.toFixed(6)} ${request.currency}`;
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-base font-bold mt-3">
+                    <span className="text-[#111111]">Total Amount (Locked)</span>
+                    <div className="text-right">
+                      <div className="text-[#00D09C] text-xl">
+                        {(() => {
+                          const baseINR = parseFloat(request.inrAmount);
+                          const feePercent = parseFloat(request.helperFee);
+                          const totalINR = Math.round(baseINR * (1 + feePercent / 100));
+                          return `₹${totalINR}`;
+                        })()}
+                      </div>
+                      <div className="text-sm text-[#999999] mt-0.5">
+                        {(() => {
+                          const baseUSDC = parseFloat(request.amount);
+                          const feePercent = parseFloat(request.helperFee);
+                          const totalUSDC = baseUSDC * (1 + feePercent / 100);
+                          return `${totalUSDC.toFixed(6)} ${request.currency}`;
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Info Grid */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-6 rounded-2xl bg-[#F8F8F8] border border-[#EDEDED]">
-                  <div className="text-xs text-[#666666] mb-2 font-medium">Helper Fee</div>
-                  <div className="text-2xl font-bold text-[#111111]">{request.helperFee}</div>
+                  <div className="text-xs text-[#666666] mb-2 font-medium">Request Number</div>
+                  <div className="text-2xl font-bold text-[#111111]">#{request.requestNumber}</div>
                 </div>
                 <div className="p-6 rounded-2xl bg-[#F8F8F8] border border-[#EDEDED]">
                   <div className="text-xs text-[#666666] mb-2 font-medium">Status</div>
