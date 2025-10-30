@@ -41,7 +41,7 @@ export default function CreateRequestPage() {
   // Form state
   const [inrAmount, setInrAmount] = useState("");
   const [qrString, setQrString] = useState("");
-  const [feeBps, setFeeBps] = useState("50");
+  const [feePercentage, setFeePercentage] = useState("0.5");
   const [expiryMinutes, setExpiryMinutes] = useState("30");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
@@ -54,8 +54,8 @@ export default function CreateRequestPage() {
   const usdcAmount = inrAmount ? (parseFloat(inrAmount) / USDC_TO_INR_RATE).toFixed(6) : "0";
   
   // Calculate helper fee in INR
-  const helperFeeINR = inrAmount && feeBps 
-    ? (parseFloat(inrAmount) * (parseFloat(feeBps) / 10000)).toFixed(2) 
+  const helperFeeINR = inrAmount && feePercentage 
+    ? (parseFloat(inrAmount) * (parseFloat(feePercentage) / 100)).toFixed(2) 
     : "0";
 
   // Transaction management refs
@@ -83,6 +83,12 @@ export default function CreateRequestPage() {
   };
 
   const handleCreate = async () => {
+    // FIRST CHECK: Prevent any duplicate execution
+    if (loading || processingRef.current) {
+      console.log("⚠️ Already processing, ignoring duplicate call");
+      return;
+    }
+    
     if (!wallet.publicKey || !wallet.signTransaction) {
       alert("Please connect your wallet first");
       return;
@@ -106,8 +112,8 @@ export default function CreateRequestPage() {
       return;
     }
     
-    // Check if processing
-    if (processingRef.current || activeTransactionRef.current) {
+    // Check if processing (redundant but safe)
+    if (activeTransactionRef.current) {
       console.log("Transaction already in progress");
       return;
     }
@@ -140,7 +146,9 @@ export default function CreateRequestPage() {
       const usdcAmountValue = parseFloat(inrAmount) / USDC_TO_INR_RATE;
       const amountLamports = Math.floor(usdcAmountValue * 1_000_000);
       const inrAmountPaise = Math.floor(parseFloat(inrAmount) * 100);
-      const feeBpsValue = parseInt(feeBps);
+      // Fee percentage - user enters directly (e.g., 0.5 for 0.5%)
+      // Rust expects percentage (0-100), where it divides by 100 to get decimal
+      const feePercentageValue = parseFloat(feePercentage);
       const expiryTs = Math.floor(Date.now() / 1000) + parseInt(expiryMinutes) * 60;
       const nonce = generateUniqueNonce();
 
@@ -181,16 +189,17 @@ export default function CreateRequestPage() {
           new BN(amountLamports),
           new BN(inrAmountPaise),
           new BN(expiryTs),
-          new BN(feeBpsValue),
-          qrString.trim(),
-          new BN(nonce)
+          feePercentageValue, // u8 in Rust, no need for BN
+          new BN(nonce),
+          qrString.trim()
         )
         .accounts({
           creator: wallet.publicKey,
           order: orderPda,
-          creatorTokenAccount,
-          escrowTokenAccount,
           mint: USDC_MINT,
+          sourceAta: creatorTokenAccount,
+          escrowAta: escrowTokenAccount,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
@@ -206,9 +215,12 @@ export default function CreateRequestPage() {
       transaction.add(...instructions);
 
       const signed = await wallet.signTransaction(transaction);
+      
+      // Send with explicit options to prevent retries of already processed transactions
       const signature = await connection.sendRawTransaction(signed.serialize(), {
         skipPreflight: false,
         preflightCommitment: "confirmed",
+        maxRetries: 0, // Prevent automatic retries that could cause "already processed" errors
       });
 
       console.log("Transaction sent:", signature);
@@ -227,7 +239,7 @@ export default function CreateRequestPage() {
       // Reset form
       setInrAmount("");
       setQrString("");
-      setFeeBps("50");
+      setFeePercentage("0.5");
       setExpiryMinutes("30");
 
       // Redirect after 2 seconds
@@ -235,18 +247,29 @@ export default function CreateRequestPage() {
         window.location.href = "/my-requests";
       }, 2000);
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error creating request:", error);
-      alert(`Error: ${error.message || "Failed to create request"}`);
+      
+      const errorMessage = error instanceof Error ? error.message : "Failed to create request";
+      
+      // Check if it's an "already processed" error - this might actually mean success
+      if (errorMessage.includes("already been processed")) {
+        setSuccess("Request may have been created successfully. Check My Requests page.");
+        setTimeout(() => {
+          window.location.href = "/my-requests";
+        }, 2000);
+      } else {
+        alert(`Error: ${errorMessage}`);
+      }
     } finally {
       setLoading(false);
       
-      // Release locks after a delay
+      // Release locks immediately on error, or after delay on success
       setTimeout(() => {
         globalTransactionLock = false;
         processingRef.current = false;
         activeTransactionRef.current = null;
-      }, 2000);
+      }, 1000);
     }
   };
 
@@ -331,29 +354,32 @@ export default function CreateRequestPage() {
               {/* Helper Fee */}
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-                  Helper Fee (% of amount)
+                  Helper Fee (%)
                   <div className="group relative">
                     <Info className="w-4 h-4 text-gray-400 cursor-help" />
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-xs rounded-lg">
-                      Fee paid to helper for providing INR liquidity (in basis points, 50 = 0.5%)
+                      Fee percentage paid to helper for providing INR liquidity (e.g., 0.5 = 0.5%)
                     </div>
                   </div>
                 </label>
                 <div className="relative">
                   <input
                     type="number"
-                    value={feeBps}
-                    onChange={(e) => setFeeBps(e.target.value)}
-                    placeholder="50"
+                    step="0.1"
+                    min="0"
+                    max="100"
+                    value={feePercentage}
+                    onChange={(e) => setFeePercentage(e.target.value)}
+                    placeholder="0.5"
                     className="w-full px-4 py-4 bg-gradient-to-br from-gray-50 to-white border-2 border-gray-200 rounded-2xl focus:border-[#E9D8FD] focus:ring-4 focus:ring-[#E9D8FD]/20 transition-all outline-none text-lg font-semibold text-gray-900"
                   />
                   <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400">
-                    bps
+                    %
                   </div>
                 </div>
-                {inrAmount && feeBps && (
+                {inrAmount && feePercentage && (
                   <p className="text-sm text-gray-600 mt-2">
-                    Fee: <span className="font-semibold text-purple-600">₹{helperFeeINR}</span> ({(parseFloat(feeBps) / 100).toFixed(2)}%)
+                    Fee: <span className="font-semibold text-purple-600">₹{helperFeeINR}</span> ({parseFloat(feePercentage).toFixed(2)}%)
                   </p>
                 )}
               </div>

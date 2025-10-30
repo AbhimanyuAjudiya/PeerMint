@@ -1,316 +1,409 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ArrowLeft, ExternalLink, QrCode, TrendingUp, CheckCircle2, Clock, DollarSign } from "lucide-react";
+import { ArrowLeft, Search, Filter, Copy, ExternalLink, CheckCircle2, Clock, XCircle, Loader2 } from "lucide-react";
 import Link from "next/link";
+import { useAnchorWallet, useConnection } from "@solana/wallet-adapter-react";
+import { getProgram } from "@/lib/anchor";
+import { PublicKey } from "@solana/web3.js";
+import { AnchorProvider } from "@coral-xyz/anchor";
+import BN from "bn.js";
 
 interface PaymentRequest {
   id: string;
   requestNumber: string;
   amount: string;
   currency: string;
+  inrAmount: string;
   helperFee: string;
-  status: "pending" | "completed";
+  status: "pending" | "completed" | "expired";
   qrString: string;
   createdAt: string;
   expiryInfo: string;
+  publicKey: PublicKey;
 }
 
-// Mock data - replace with actual blockchain data
-const mockRequests: PaymentRequest[] = [
-  {
-    id: "1",
-    requestNumber: "18876022",
-    amount: "1.00",
-    currency: "USDC",
-    helperFee: "5%",
-    status: "pending",
-    qrString: "upi://pay?pa=merchant@paytm&pn=PeerMint&am=100&cu=INR&tn=Payment",
-    createdAt: "2024-03-15",
-    expiryInfo: "No expiry"
-  },
-  {
-    id: "2",
-    requestNumber: "18876021",
-    amount: "2.50",
-    currency: "USDC",
-    helperFee: "5%",
-    status: "completed",
-    qrString: "upi://pay?pa=merchant@paytm&pn=PeerMint&am=250&cu=INR&tn=Payment",
-    createdAt: "2024-03-14",
-    expiryInfo: "No expiry"
-  },
-  {
-    id: "3",
-    requestNumber: "18876020",
-    amount: "0.75",
-    currency: "USDC",
-    helperFee: "5%",
-    status: "completed",
-    qrString: "upi://pay?pa=merchant@paytm&pn=PeerMint&am=75&cu=INR&tn=Payment",
-    createdAt: "2024-03-13",
-    expiryInfo: "No expiry"
-  }
-];
+interface Order {
+  publicKey: PublicKey;
+  account: {
+    creator: PublicKey;
+    helper: PublicKey | null;
+    amount: BN;
+    feePercentage: number;
+    expiry: BN | number;
+    qrString: string;
+    status: number;
+    nonce: BN;
+  };
+}
 
 export default function MyRequestsPage() {
-  const [requests, setRequests] = useState<PaymentRequest[]>(mockRequests);
-  const [selectedQR, setSelectedQR] = useState<string | null>(null);
-  const [stats, setStats] = useState({
-    total: 0,
-    completed: 0,
-    pending: 0,
-    volume: 0
-  });
+  const wallet = useAnchorWallet();
+  const { connection } = useConnection();
+  const [requests, setRequests] = useState<PaymentRequest[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "completed" | "expired">("all");
 
-  useEffect(() => {
-    // Calculate stats
-    const completed = requests.filter(r => r.status === "completed").length;
-    const pending = requests.filter(r => r.status === "pending").length;
-    const volume = requests.reduce((sum, r) => sum + parseFloat(r.amount), 0);
+  const getStatusFromCode = (statusCode: number): "pending" | "completed" | "expired" => {
+    if (statusCode === 0) return "pending";
+    if (statusCode === 1) return "completed";
+    return "expired";
+  };
 
-    // Animate numbers
-    const duration = 1000;
-    const steps = 50;
-    const interval = duration / steps;
-    let step = 0;
+  const getExpiryInfo = (expiry: BN | number | undefined, status: number): string => {
+    if (status === 1) return "Completed";
+    if (status === 2) return "Expired";
+    if (!expiry) return "No expiry";
+    
+    const expiryTimestamp = typeof expiry === 'number' ? expiry : expiry.toNumber();
+    const now = Math.floor(Date.now() / 1000);
+    
+    if (expiryTimestamp <= now) return "Expired";
+    
+    const daysLeft = Math.ceil((expiryTimestamp - now) / 86400);
+    if (daysLeft === 1) return "Expires in 1 day";
+    if (daysLeft > 1) return `Expires in ${daysLeft} days`;
+    
+    const hoursLeft = Math.ceil((expiryTimestamp - now) / 3600);
+    if (hoursLeft === 1) return "Expires in 1 hour";
+    return `Expires in ${hoursLeft} hours`;
+  };
 
-    const timer = setInterval(() => {
-      step++;
-      const progress = step / steps;
-      setStats({
-        total: Math.floor(requests.length * progress),
-        completed: Math.floor(completed * progress),
-        pending: Math.floor(pending * progress),
-        volume: volume * progress
+  const formatAmount = (amount: BN): { usdc: string; inr: string } => {
+    // Convert lamports to USDC (6 decimals)
+    const usdcAmount = amount.toNumber() / 1_000_000;
+    // Approximate INR conversion (1 USDC ≈ 84 INR)
+    const inrAmount = Math.round(usdcAmount * 84);
+    
+    return {
+      usdc: usdcAmount.toFixed(2),
+      inr: inrAmount.toLocaleString()
+    };
+  };
+
+  const fetchMyRequests = async () => {
+    if (!wallet) {
+      setRequests([]);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const provider = new AnchorProvider(connection, wallet, {});
+      const program = getProgram(provider);
+      
+      // Fetch all order accounts with better error handling
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let allOrders: any[] = [];
+      try {
+        // Get all program accounts without filters
+        const accounts = await connection.getProgramAccounts(program.programId);
+
+        // Try to deserialize each account individually, skipping failures
+        for (const { pubkey, account } of accounts) {
+          try {
+            const decoded = program.coder.accounts.decode('order', account.data);
+            allOrders.push({
+              publicKey: pubkey,
+              account: decoded,
+            });
+          } catch {
+            // Skip accounts that can't be deserialized (old schema or different account type)
+            // This is expected and won't affect functionality
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching program accounts:", error);
+        allOrders = [];
+      }
+
+      // Filter orders created by the current wallet
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const myOrdersList = allOrders.filter((order: any) => {
+        try {
+          return order.account.creator.toString() === wallet.publicKey.toString();
+        } catch {
+          return false;
+        }
+      }) as Order[];
+
+      // Transform to PaymentRequest format
+      const transformedRequests: PaymentRequest[] = myOrdersList.map((order) => {
+        const amounts = formatAmount(order.account.amount);
+        const status = getStatusFromCode(order.account.status);
+        
+        return {
+          id: order.publicKey.toString(),
+          requestNumber: order.account.nonce.toString().padStart(6, '0'),
+          amount: amounts.usdc,
+          currency: "USDC",
+          inrAmount: amounts.inr,
+          helperFee: `${order.account.feePercentage}%`,
+          status,
+          qrString: order.account.qrString,
+          createdAt: new Date().toISOString().split('T')[0], // We don't store creation time on-chain
+          expiryInfo: getExpiryInfo(order.account.expiry, order.account.status),
+          publicKey: order.publicKey
+        };
       });
 
-      if (step >= steps) clearInterval(timer);
-    }, interval);
+      // Sort by status (pending first, then completed, then expired) and by nonce (newest first)
+      transformedRequests.sort((a, b) => {
+        const statusOrder = { pending: 0, completed: 1, expired: 2 };
+        const statusDiff = statusOrder[a.status] - statusOrder[b.status];
+        if (statusDiff !== 0) return statusDiff;
+        return parseInt(b.requestNumber) - parseInt(a.requestNumber);
+      });
 
-    return () => clearInterval(timer);
-  }, [requests]);
+      setRequests(transformedRequests);
+    } catch (error) {
+      console.error("Error fetching my requests:", error);
+      if (error instanceof Error && error.message.includes("failed to deserialize")) {
+        console.warn("Some old requests are incompatible with the current program version.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMyRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet?.publicKey]);
 
   const truncateString = (str: string, maxLength: number = 40) => {
     if (str.length <= maxLength) return str;
     return str.substring(0, maxLength) + "...";
   };
 
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    // Optional: Show a toast notification
+  };
+
+  const filteredRequests = requests.filter(req => {
+    const matchesSearch = req.requestNumber.includes(searchQuery) || 
+                         req.status.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesFilter = filterStatus === "all" || req.status === filterStatus;
+    return matchesSearch && matchesFilter;
+  });
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#0B0B1A] via-[#131326] to-[#0B0B1A] relative overflow-hidden">
-      {/* Background Noise Texture */}
-      <div className="absolute inset-0 opacity-[0.015] pointer-events-none">
-        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIj48ZmlsdGVyIGlkPSJhIiB4PSIwIiB5PSIwIj48ZmVUdXJidWxlbmNlIGJhc2VGcmVxdWVuY3k9Ii43NSIgc3RpdGNoVGlsZXM9InN0aXRjaCIgdHlwZT0iZnJhY3RhbE5vaXNlIi8+PGZlQ29sb3JNYXRyaXggdHlwZT0ic2F0dXJhdGUiIHZhbHVlcz0iMCIvPjwvZmlsdGVyPjxwYXRoIGQ9Ik0wIDBoMzAwdjMwMEgweiIgZmlsdGVyPSJ1cmwoI2EpIiBvcGFjaXR5PSIuMDUiLz48L3N2Zz4=')]" />
+    <div className="min-h-screen bg-white relative overflow-hidden">
+      {/* Floating Background Shapes */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-20 left-10 w-96 h-96 bg-[#BFFFE0] rounded-full opacity-10 blur-3xl" />
+        <div className="absolute top-40 right-20 w-80 h-80 bg-[#E8E0FF] rounded-full opacity-10 blur-3xl" />
+        <div className="absolute bottom-20 left-1/3 w-72 h-72 bg-[#E1F0FF] rounded-full opacity-10 blur-3xl" />
+        <div className="absolute bottom-40 right-1/4 w-64 h-64 bg-[#FFF2E5] rounded-full opacity-10 blur-3xl" />
       </div>
 
-      <div className="relative z-10 max-w-[1000px] mx-auto px-6 py-8">
+      <div className="relative z-10 max-w-7xl mx-auto px-6 py-8">
         {/* Breadcrumb */}
         <Link 
           href="/"
-          className="inline-flex items-center gap-2 text-[#9CA3AF] hover:text-[#00D09C] transition-colors duration-300 mb-8 group"
+          className="inline-flex items-center gap-2 text-[#666666] hover:text-[#00D09C] transition-colors duration-300 mb-8 group"
         >
           <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform duration-300" />
-          <span className="text-sm font-medium">Back to Home</span>
+          <span className="text-sm font-medium">Home</span>
         </Link>
 
         {/* Page Header */}
         <div className="mb-8">
-          <h1 className="text-[28px] font-bold text-[#E5E7EB] mb-2" style={{ fontFamily: 'Inter, sans-serif' }}>
+          <h1 className="text-4xl font-bold text-[#111111] mb-3">
             My Requests
           </h1>
-          <p className="text-[16px] text-[#9CA3AF] mb-6" style={{ fontFamily: 'Inter, sans-serif' }}>
-            Manage your payment requests and track their status in real-time.
+          <p className="text-[#666666] text-lg">
+            View and manage your payment requests securely.
           </p>
-          <div className="h-[1px] bg-white/8" />
+          <div className="mt-4 inline-flex items-center gap-2 text-sm text-[#666666]">
+            <span className="font-semibold text-[#111111]">{filteredRequests.length}</span>
+            <span>Requests Found</span>
+          </div>
         </div>
 
-        {/* Live Stats Bar */}
-        <div className="mb-8 p-6 rounded-2xl bg-white/[0.02] border border-white/[0.08] backdrop-blur-sm">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            {/* Total Requests */}
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-2 mb-2">
-                <TrendingUp className="w-4 h-4 text-[#00D09C]" />
-                <span className="text-[#9CA3AF] text-xs uppercase tracking-wider">Total</span>
-              </div>
-              <div className="text-2xl font-bold text-[#F3F4F6]">
-                {stats.total.toLocaleString()}
-              </div>
+        {/* Filters & Search Bar (Sticky) */}
+        <div className="sticky top-0 z-20 bg-white/80 backdrop-blur-md shadow-[0_2px_20px_rgba(0,0,0,0.05)] rounded-2xl p-4 mb-8">
+          <div className="flex flex-col sm:flex-row gap-4">
+            {/* Search Input */}
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                placeholder="Search by ID or Status..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full px-4 py-3 pl-11 rounded-xl border border-[#EDEDED] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.04)] focus:outline-none focus:ring-2 focus:ring-[#9FFFCB] focus:border-transparent transition-all text-[#111111] placeholder-[#999999]"
+              />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#999999]" />
             </div>
 
-            {/* Completed */}
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-2 mb-2">
-                <CheckCircle2 className="w-4 h-4 text-[#22C55E]" />
-                <span className="text-[#9CA3AF] text-xs uppercase tracking-wider">Completed</span>
-              </div>
-              <div className="text-2xl font-bold text-[#22C55E]">
-                {stats.completed.toLocaleString()}
-              </div>
-            </div>
-
-            {/* Pending */}
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-2 mb-2">
-                <Clock className="w-4 h-4 text-[#FACC15]" />
-                <span className="text-[#9CA3AF] text-xs uppercase tracking-wider">Pending</span>
-              </div>
-              <div className="text-2xl font-bold text-[#FACC15]">
-                {stats.pending.toLocaleString()}
-              </div>
-            </div>
-
-            {/* Volume */}
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-2 mb-2">
-                <DollarSign className="w-4 h-4 text-[#C084FC]" />
-                <span className="text-[#9CA3AF] text-xs uppercase tracking-wider">Volume</span>
-              </div>
-              <div className="text-2xl font-bold bg-gradient-to-r from-[#00D09C] to-[#C084FC] bg-clip-text text-transparent">
-                ${stats.volume.toFixed(2)}
-              </div>
+            {/* Filter Dropdown */}
+            <div className="relative">
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value as "all" | "pending" | "completed" | "expired")}
+                className="appearance-none px-6 py-3 pr-10 rounded-xl border border-[#EDEDED] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.04)] focus:outline-none focus:ring-2 focus:ring-[#9FFFCB] focus:border-transparent transition-all text-[#111111] cursor-pointer font-medium"
+              >
+                <option value="all">All Requests</option>
+                <option value="pending">Pending</option>
+                <option value="completed">Completed</option>
+                <option value="expired">Expired</option>
+              </select>
+              <Filter className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#999999] pointer-events-none" />
             </div>
           </div>
         </div>
 
-        {/* Request Cards */}
-        <div className="space-y-4">
-          {requests.map((request, index) => (
+        {/* Loading State */}
+        {loading && (
+          <div className="flex flex-col items-center justify-center py-20">
+            <Loader2 className="w-12 h-12 text-[#00D09C] animate-spin mb-4" />
+            <p className="text-[#666666] text-lg">Loading your requests...</p>
+          </div>
+        )}
+
+        {/* Wallet Not Connected */}
+        {!wallet && !loading && (
+          <div className="text-center py-20">
+            <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-[#BFFFE0]/20 to-[#E8E0FF]/20 border border-[#EDEDED] flex items-center justify-center">
+              <Clock className="w-12 h-12 text-[#999999]" />
+            </div>
+            <h3 className="text-2xl font-bold text-[#111111] mb-3">Connect Your Wallet</h3>
+            <p className="text-[#666666] mb-8 max-w-md mx-auto">
+              Please connect your Solana wallet to view your payment requests.
+            </p>
+          </div>
+        )}
+
+        {/* Request Cards Grid */}
+        {!loading && wallet && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredRequests.map((request, index) => (
             <div
               key={request.id}
-              className="group p-6 rounded-[24px] bg-white/[0.03] border border-white/[0.08] backdrop-blur-[16px] shadow-[0_6px_30px_rgba(0,0,0,0.5)] hover:shadow-[0_4px_24px_rgba(0,208,156,0.1)] transition-all duration-500 hover:-translate-y-1"
+              className="group relative p-6 rounded-3xl bg-white/80 backdrop-blur-sm border border-[#F2F2F2] shadow-[0_4px_20px_rgba(0,0,0,0.06)] hover:shadow-[0_4px_20px_rgba(140,255,200,0.2)] hover:scale-[1.02] transition-all duration-300 ease-in-out"
               style={{
-                animation: `fadeInUp 0.6s ease-out ${index * 0.1}s both`
+                animation: `fadeInUp 0.5s ease-out ${index * 0.08}s both`
               }}
             >
-              {/* Top Row */}
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h3 className="text-lg font-bold bg-gradient-to-r from-[#00D09C] to-[#3B82F6] bg-clip-text text-transparent mb-1">
-                    Request #{request.requestNumber}
-                  </h3>
-                  <p className="text-sm text-[#9CA3AF]">{request.expiryInfo}</p>
+              {/* Pastel Gradient Overlay */}
+              <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-[#BFFFE0]/10 via-transparent to-[#E8E0FF]/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+
+              {/* Top Row - Request ID & Status */}
+              <div className="relative flex items-start justify-between mb-5">
+                <div className="text-sm font-semibold text-[#555555]">
+                  #{request.requestNumber}
                 </div>
                 <div>
                   {request.status === "pending" ? (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#EAB308]/15 text-[#FACC15] text-sm font-medium">
-                      <Clock className="w-3.5 h-3.5" />
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#FFE8A3] border border-[#FFD770] text-[#996A00] text-xs font-medium animate-pulse-glow">
+                      <Clock className="w-3 h-3" />
                       Pending
                     </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#22C55E]/15 text-[#22C55E] text-sm font-medium">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
+                  ) : request.status === "completed" ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#CFF8D8] border border-[#9EF0B3] text-[#00662E] text-xs font-medium">
+                      <CheckCircle2 className="w-3 h-3" />
                       Completed
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#FFD6D6] border border-[#FFAAAA] text-[#CC0000] text-xs font-medium">
+                      <XCircle className="w-3 h-3" />
+                      Expired
                     </span>
                   )}
                 </div>
               </div>
 
-              {/* Middle Row - Grid */}
-              <div className="grid grid-cols-2 gap-6 mb-4">
-                {/* Helper Pays */}
-                <div>
-                  <label className="block text-xs text-[#9CA3AF] uppercase tracking-wider mb-1">
-                    Helper Pays (INR)
-                  </label>
-                  <div className="text-xl font-semibold text-[#F3F4F6]">
+              {/* Middle Section - 2 Column Data */}
+              <div className="relative grid grid-cols-2 gap-4 mb-5">
+                {/* Helper Pays (INR/USDC) */}
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-[#BFFFE0]/20 to-[#E1F0FF]/20 border border-[#EDEDED]">
+                  <div className="text-xs text-[#666666] mb-1.5 font-medium">
+                    Amount
+                  </div>
+                  <div className="text-base font-bold text-[#111111] mb-0.5">
+                    ₹{request.inrAmount}
+                  </div>
+                  <div className="text-xs text-[#999999]">
                     {request.amount} {request.currency}
                   </div>
                 </div>
 
                 {/* Helper Fee */}
-                <div>
-                  <label className="block text-xs text-[#9CA3AF] uppercase tracking-wider mb-1">
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-[#E8E0FF]/20 to-[#FFF2E5]/20 border border-[#EDEDED]">
+                  <div className="text-xs text-[#666666] mb-1.5 font-medium">
                     Helper Fee
-                  </label>
-                  <div className="text-xl font-semibold text-[#00D09C]">
+                  </div>
+                  <div className="text-base font-bold text-[#111111] mb-0.5">
                     {request.helperFee}
+                  </div>
+                  <div className="text-xs text-[#999999]">
+                    Commission
                   </div>
                 </div>
               </div>
 
-              {/* QR Section */}
-              <div className="mb-4">
-                <label className="block text-xs text-[#9CA3AF] uppercase tracking-wider mb-2">
+              {/* Payment QR */}
+              <div className="relative mb-5">
+                <div className="text-xs text-[#666666] mb-2 font-medium">
                   Payment QR
-                </label>
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 px-4 py-3 bg-black/30 border border-white/[0.06] rounded-xl text-sm text-[#9CA3AF] font-mono">
-                    {truncateString(request.qrString)}
+                </div>
+                <div className="flex items-center gap-2 px-4 py-3 bg-[#F8F8F8] border border-[#EDEDED] rounded-xl">
+                  <div className="flex-1 text-xs text-[#999999] font-mono truncate">
+                    {truncateString(request.qrString, 28)}
                   </div>
                   <button
-                    onClick={() => setSelectedQR(request.qrString)}
-                    className="flex items-center gap-2 px-4 py-3 text-[#00D09C] hover:text-[#00F0B5] transition-colors duration-300 font-medium text-sm"
+                    onClick={() => copyToClipboard(request.qrString)}
+                    className="text-[#00D09C] hover:text-[#00B982] transition-colors"
+                    title="Copy QR string"
                   >
-                    <QrCode className="w-4 h-4" />
-                    Show QR
+                    <Copy className="w-4 h-4" />
                   </button>
                 </div>
               </div>
 
               {/* Action Button */}
-              <button className="group/btn relative w-full px-6 py-4 rounded-2xl font-bold text-white shadow-lg overflow-hidden transition-all duration-300 hover:scale-[1.03]">
-                {/* Gradient Background */}
-                <div className="absolute inset-0 bg-gradient-to-r from-[#00D09C] to-[#3B82F6]" />
-                {/* Hover Glow */}
-                <div className="absolute inset-0 opacity-0 group-hover/btn:opacity-100 shadow-[0_0_30px_rgba(0,209,156,0.6)] transition-opacity duration-300" />
+              <Link 
+                href={`/request/${request.id}`}
+                className="group/btn relative w-full px-5 py-3.5 rounded-full font-semibold text-[#111111] shadow-lg overflow-hidden transition-all duration-300 hover:shadow-[0_8px_24px_rgba(140,255,200,0.3)] block"
+              >
+                {/* Animated Pastel Gradient Background */}
+                <div className="absolute inset-0 bg-gradient-to-r from-[#BFFFE0] via-[#9FFFCB] to-[#E8E0FF] bg-[length:200%_100%] group-hover/btn:animate-gradient-shift" />
                 {/* Content */}
-                <div className="relative flex items-center justify-center gap-2">
+                <div className="relative flex items-center justify-center gap-2 text-sm font-bold">
                   <span>View Details</span>
                   <ExternalLink className="w-4 h-4" />
                 </div>
-              </button>
+              </Link>
             </div>
           ))}
-        </div>
 
-        {/* Empty State (show when no requests) */}
-        {requests.length === 0 && (
-          <div className="text-center py-20">
-            <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-white/[0.03] border border-white/[0.08] flex items-center justify-center">
-              <Clock className="w-10 h-10 text-[#9CA3AF]" />
-            </div>
-            <h3 className="text-xl font-bold text-[#E5E7EB] mb-2">No Requests Yet</h3>
-            <p className="text-[#9CA3AF] mb-6">Create your first payment request to get started.</p>
-            <Link 
-              href="/create"
-              className="inline-block px-6 py-3 bg-gradient-to-r from-[#00D09C] to-[#3B82F6] rounded-xl text-white font-bold hover:scale-105 transition-transform duration-300"
-            >
-              Create Request
-            </Link>
+            {/* Empty State (show when no requests) */}
+            {filteredRequests.length === 0 && (
+              <div className="col-span-full text-center py-20">
+                <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-[#BFFFE0]/20 to-[#E8E0FF]/20 border border-[#EDEDED] flex items-center justify-center">
+                  <Clock className="w-12 h-12 text-[#999999]" />
+                </div>
+                <h3 className="text-2xl font-bold text-[#111111] mb-3">No Requests Found</h3>
+                <p className="text-[#666666] mb-8 max-w-md mx-auto">
+                  {searchQuery || filterStatus !== "all" 
+                    ? "Try adjusting your search or filters." 
+                    : "Create your first payment request to get started."}
+                </p>
+                {!searchQuery && filterStatus === "all" && (
+                  <Link 
+                    href="/create"
+                    className="inline-block px-8 py-4 bg-gradient-to-r from-[#BFFFE0] to-[#E8E0FF] rounded-full text-[#111111] font-bold hover:scale-105 hover:shadow-[0_8px_24px_rgba(140,255,200,0.3)] transition-all duration-300"
+                  >
+                    Create Request
+                  </Link>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
-
-      {/* QR Modal */}
-      {selectedQR && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm animate-fade-in"
-          onClick={() => setSelectedQR(null)}
-        >
-          <div 
-            className="relative p-8 bg-white rounded-3xl shadow-2xl max-w-md w-full animate-scale-in"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={() => setSelectedQR(null)}
-              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
-            >
-              ×
-            </button>
-            <h3 className="text-xl font-bold text-gray-900 mb-4">Payment QR Code</h3>
-            <div className="bg-gray-50 p-4 rounded-xl mb-4">
-              <div className="aspect-square bg-white flex items-center justify-center">
-                {/* QR Code would be generated here */}
-                <QrCode className="w-48 h-48 text-gray-300" />
-              </div>
-            </div>
-            <div className="text-sm text-gray-600 break-all font-mono bg-gray-50 p-3 rounded-lg">
-              {selectedQR}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Animations */}
       <style jsx>{`
@@ -337,11 +430,32 @@ export default function MyRequestsPage() {
         @keyframes scaleIn {
           from {
             opacity: 0;
-            transform: scale(0.9);
+            transform: scale(0.95);
           }
           to {
             opacity: 1;
             transform: scale(1);
+          }
+        }
+
+        @keyframes gradient-shift {
+          0% {
+            background-position: 0% 50%;
+          }
+          50% {
+            background-position: 100% 50%;
+          }
+          100% {
+            background-position: 0% 50%;
+          }
+        }
+
+        @keyframes pulse-glow {
+          0%, 100% {
+            box-shadow: 0 0 8px rgba(255, 215, 112, 0.3);
+          }
+          50% {
+            box-shadow: 0 0 16px rgba(255, 215, 112, 0.6);
           }
         }
 
@@ -350,7 +464,15 @@ export default function MyRequestsPage() {
         }
 
         .animate-scale-in {
-          animation: scaleIn 0.3s ease-out;
+          animation: scaleIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .animate-gradient-shift {
+          animation: gradient-shift 4s ease infinite;
+        }
+
+        .animate-pulse-glow {
+          animation: pulse-glow 2.5s ease-in-out infinite;
         }
       `}</style>
     </div>

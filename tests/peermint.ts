@@ -53,10 +53,11 @@ describe("peermint escrow tests", () => {
 
   it("create_request moves USDC to escrow", async () => {
     const amount = new anchor.BN(1_000_000);
+    const inrAmount = new anchor.BN(8400); // 84 INR = 1 USD, so 1 USDC = 84 INR = 8400 paise
     nonce = new anchor.BN(Date.now());
     const qr = "upi://pay?pa=test@paytm&am=1";
     const expiryTs = new anchor.BN(Math.floor(Date.now() / 1000) + 3600);
-    const feeBps = 50;
+    const feeBps = 5; // 5% fee
 
     [orderPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("order"), creator.publicKey.toBuffer(), nonce.toArrayLike(Buffer, "le", 8)],
@@ -75,7 +76,7 @@ describe("peermint escrow tests", () => {
     );
 
     await program.methods
-      .createRequest(amount, expiryTs, feeBps, nonce, qr)
+      .createRequest(amount, inrAmount, expiryTs, feeBps, nonce, qr)
       .accounts({
         creator: creator.publicKey,
         order: orderPda,
